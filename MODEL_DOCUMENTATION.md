@@ -461,15 +461,40 @@ output. Each entry separates **model behavior** (what the code does) from
   future riskfolio version reads the returns frame for anything beyond
   shape/index (e.g. shrinkage estimators, sample-based risk measures,
   whitening), the synthetic zeros could silently produce wrong answers.
-  Two consequences for downstream work:
-  1. The adapter is currently pinned at `riskfolio-lib==7.2.1`. Any
-     bump must include a parity-vs-known-good-CMA test, not just the
-     structural parity that exists today.
-  2. The right long-term fix is to feed riskfolio a properly-shaped
-     historical returns frame derived from the CMA (e.g. by Cholesky-
-     factoring `cov` and emitting deterministic synthetic samples whose
-     sample mean and sample cov match the CMA exactly) — deferred
-     until a real CMA pipeline lands.
+  The adapter currently relies on the assumption "riskfolio ignores
+  the returns frame after `hist=False`," which is an **assumption about
+  internal behavior, not a contract**.
+
+  #### Version-bump policy (mandatory)
+
+  > Any change to `riskfolio-lib` version MUST:
+  >
+  > 1. pass the structural parity tests in
+  >    `tests/test_riskfolio_adapter.py`, **AND**
+  > 2. match a frozen-CMA numerical anchor test case within tolerance
+  >    (per-bucket weight difference `< ε`),
+  >
+  > **OR** explicitly document the deviation in the Change Log under
+  > the version bump's entry, including: the bucket(s) whose weight
+  > moved, the magnitude of the move, the upstream change that caused
+  > it (riskfolio release notes link), and the decision (accept the
+  > new behavior, pin to the old version, or block the bump).
+
+  Structural parity alone will not catch subtle numerical drift; a
+  numerical anchor case is required for the bump to be safe.
+
+  #### Long-term fix
+
+  Feed riskfolio a properly-shaped synthetic returns frame derived
+  from the CMA — e.g. by Cholesky-factoring `cov` and emitting
+  deterministic samples whose sample mean and sample cov match the
+  CMA exactly. This makes the adapter provably insensitive to the
+  current hack. Deferred until a real CMA pipeline lands; until then,
+  the version-bump policy above is the load-bearing safeguard.
+
+  An adapter-insensitivity test (compare adapter output with the
+  current 2-row zero frame vs. with Cholesky-derived samples) will
+  ship alongside that fix.
 
 ### L12 — Non-fatal "convert self.cov to a positive definite matrix" warning
 
@@ -752,6 +777,32 @@ what changed, why, impact on outputs, backward-compatibility flag.
   updates this file from now on; entries are appended, never rewritten.
 * **Impact on outputs.** None.
 * **Backward-compatible.** Yes.
+
+### 2026-05-01 — L11 tightened to mandatory version-bump policy
+
+* **What.** Strengthened L11 from "any bump *must include* a
+  parity-vs-known-good-CMA test" to a normative version-bump policy:
+  any `riskfolio-lib` version change MUST pass structural parity AND
+  match a frozen-CMA numerical anchor case within tolerance, OR
+  explicitly document the deviation in the Change Log (with which
+  bucket moved, magnitude, upstream cause, and the decision).
+  Added the long-term fix path (Cholesky-derived synthetic samples)
+  with an explicit adapter-insensitivity test scheduled to ship
+  alongside it. Made the underlying assumption — "riskfolio ignores
+  the returns frame after `hist=False`" — visible as an assumption
+  rather than a contract.
+* **Why.** Phase 3a audit observation that structural parity alone
+  cannot catch subtle numerical drift across riskfolio versions, and
+  that the synthetic-returns-frame coupling is currently load-bearing
+  on an unverified internal assumption. Encoding the policy in this
+  document promotes the requirement from "good practice" to "blocked
+  unless explicitly waived in the Change Log."
+* **Impact on outputs.** None today. The first practical effect lands
+  on the next riskfolio version bump or on the Cholesky-fix commit,
+  whichever comes first. The numerical anchor test itself is not yet
+  written (deferred to "soon, before the first version bump") — the
+  long-term fix and the anchor test will land together.
+* **Backward-compatible.** Yes (docs only).
 
 ### 2026-05-01 — Phase 3a documentation expansion (gating P3b)
 
