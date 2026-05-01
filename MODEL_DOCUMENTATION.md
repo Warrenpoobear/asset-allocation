@@ -472,13 +472,21 @@ output. Each entry separates **model behavior** (what the code does) from
   > 1. pass the structural parity tests in
   >    `tests/test_riskfolio_adapter.py`, **AND**
   > 2. match a frozen-CMA numerical anchor test case within tolerance
-  >    (per-bucket weight difference `< ε`),
+  >    (per-bucket absolute weight difference `≤ ε = 1e-4`),
   >
   > **OR** explicitly document the deviation in the Change Log under
   > the version bump's entry, including: the bucket(s) whose weight
   > moved, the magnitude of the move, the upstream change that caused
   > it (riskfolio release notes link), and the decision (accept the
   > new behavior, pin to the old version, or block the bump).
+  >
+  > **ε rationale.** `1e-4` is one basis point of weight, two orders of
+  > magnitude tighter than the smallest economically meaningful
+  > allocation step (1 bp position size at $100M NAV ≈ $10k). Tighter
+  > would catch solver-reproducibility noise as drift; looser would
+  > admit silently-different optimization behavior. The same ε applies
+  > by analogy to other adapters' numerical anchor tests unless their
+  > Change Log entry documents a different value and why.
 
   Structural parity alone will not catch subtle numerical drift; a
   numerical anchor case is required for the bump to be safe.
@@ -777,6 +785,21 @@ what changed, why, impact on outputs, backward-compatibility flag.
   updates this file from now on; entries are appended, never rewritten.
 * **Impact on outputs.** None.
 * **Backward-compatible.** Yes.
+
+### 2026-05-01 — L11 ε defined as `1e-4`
+
+* **What.** Made the previously-symbolic `< ε` in the L11 version-bump
+  policy a concrete value: per-bucket absolute weight difference
+  `≤ 1e-4` (one basis point of weight). Same ε applies by analogy to
+  other adapters' numerical anchor tests unless their Change Log entry
+  documents a different value and why.
+* **Why.** Phase 3a audit follow-up. An unspecified ε is unenforceable
+  (a future test could pass with implicitly-large tolerance and still
+  miss real drift).
+* **Impact on outputs.** None today. Will bind on the next riskfolio
+  bump and on the first numerical anchor test (P3b will produce one
+  for cvxportfolio).
+* **Backward-compatible.** Yes (docs only).
 
 ### 2026-05-01 — L11 tightened to mandatory version-bump policy
 
