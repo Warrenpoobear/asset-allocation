@@ -194,6 +194,33 @@ def test_end_nav_through_pre_start_returns_initial():
     assert nav["a"] == 100.0
 
 
+def test_spend_uniqueness_passes_for_one_row_per_source_per_quarter():
+    """Phase 4a hardening: a single spend row per (run_id, quarter, source) is
+    the orchestrator's emission pattern. Multiple distinct sources in the same
+    quarter remain valid (e.g. spending rule + ad-hoc external withdrawal).
+    """
+    q1 = _q("2026Q1")
+    q2 = _q("2026Q2")
+    L = QuarterlyLedger("r", initial_nav={"cash": 100.0}, start_quarter=q1)
+    L.add(quarter=q1, bucket="cash", flow_type="spend", amount_usd=-2.0, source="spending:flat")
+    L.add(quarter=q1, bucket="cash", flow_type="spend", amount_usd=-1.0, source="spending:other")
+    L.add(quarter=q2, bucket="cash", flow_type="spend", amount_usd=-2.0, source="spending:flat")
+    L.validate()
+
+
+def test_spend_uniqueness_violation_detected():
+    """Two spend rows at the same (run_id, quarter, source) would silently
+    double-count under path-dependent prior-spend recovery. Invariant must
+    catch it.
+    """
+    q = _q("2026Q1")
+    L = QuarterlyLedger("r", initial_nav={"cash": 100.0}, start_quarter=q)
+    L.add(quarter=q, bucket="cash", flow_type="spend", amount_usd=-1.0, source="spending:flat")
+    L.add(quarter=q, bucket="cash", flow_type="spend", amount_usd=-1.0, source="spending:flat")
+    with pytest.raises(AssertionError, match="duplicate spend row"):
+        L.validate()
+
+
 def test_end_nav_by_quarter_includes_all_buckets():
     q1 = _q("2026Q1")
     q2 = _q("2026Q2")

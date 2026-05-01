@@ -259,6 +259,23 @@ class QuarterlyLedger:
                     f"sum(amount)={amt_sum}, nav_change={nav_change}"
                 )
 
+        # Spend uniqueness per (run_id, quarter, source). Phase 4a hardening:
+        # path-dependent rules recover prior outflow by filtering spend rows
+        # on their own SOURCE_ID; a duplicate row at the same key would
+        # silently double-count and corrupt the recovery. run_id is constant
+        # within a ledger, but include it in the key so the invariant reads
+        # the same in multi-run contexts (comparison reports).
+        sp = df[df["flow_type"] == "spend"]
+        if not sp.empty:
+            dups = sp.groupby(["run_id", "quarter", "source"], sort=False).size()
+            dups = dups[dups > 1]
+            if not dups.empty:
+                first = dups.index[0]
+                raise AssertionError(
+                    f"duplicate spend row at (run_id, quarter, source)={first}: "
+                    f"{int(dups.iloc[0])} rows"
+                )
+
         # Rebalance zero-sum per quarter.
         rb = df[df["flow_type"] == "rebalance"]
         if not rb.empty:

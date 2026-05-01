@@ -1094,6 +1094,25 @@ class SpendingRule(ABC):
         ...
 ```
 
+> **`quarterly_outflows()` is compatibility-only for path-dependent rules.**
+> It is **not** a correctness path. The wrapper iterates
+> `quarterly_outflow_at` against a *synthetic* working ledger seeded only
+> with the rule's own prior `spend` rows — it has no realized `return`,
+> `pe_*`, `rebalance`, or `transaction_cost` flows, so a path-dependent
+> rule called through it sees a degenerate trajectory (its own outflows
+> against a frozen NAV) rather than the real one.
+>
+> The authoritative correctness path is the orchestrator-driven
+> `quarterly_outflow_at(ledger, params, quarter)` against the live
+> ledger closed through `quarter - 1` (`ledger.closed_through(q-1)` /
+> `ledger.end_nav_through(q-1)`). All production runs go through this
+> path. `quarterly_outflows()` exists for (a) Phase 1–3 callers that
+> haven't migrated and (b) unit tests that exercise per-quarter recursion
+> in isolation. It must not be used for any analysis that depends on
+> realized NAV, costs, or PE flows — including any future cost-aware
+> sizing in Phase 4b. Path-dependent rules (`SmoothingRule`, `OwlRule`)
+> are guaranteed *correct* only on the orchestrator path.
+
 Per-rule migration:
 
 * `FlatRealRule` — no ledger reads required; the per-quarter method
