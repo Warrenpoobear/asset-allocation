@@ -1085,6 +1085,69 @@ For allocation and implementation adapters, a parallel
 when Phase 4b lands; Phase 4a keeps allocation / implementation on
 their existing per-call APIs (see split below).
 
+### q0 initialization
+
+> **q0 is initialization, not a guardrail decision.**
+
+At `q == start_quarter` the closed ledger has no rows for the rule to
+read. The rule must produce a baseline value with no guardrail check,
+no inflation step, no special ledger event:
+
+```python
+if quarter == params.start_quarter:
+    return cfg.annual_spend_usd / 4.0
+```
+
+This is the rule's responsibility, not the orchestrator's. The
+orchestrator does **not** seed q0 from outside; the rule owns q0
+initialization end-to-end. Architectural rationale:
+
+* keeps the orchestrator's per-quarter loop uniform — every
+  quarter calls the same `quarterly_outflow_at` method;
+* preserves "no orchestrator-side prior_spend state" — the
+  orchestrator never holds a baseline value across calls;
+* lets each rule define its own q0 semantics if needed (e.g., a
+  future rule might compute q0 from a different baseline).
+
+`FlatRealRule`, `SmoothingRule`, and `OwlRule` all return
+`annual_spend_usd / 4` at q0. From `q == start_quarter + 1` onward
+they branch to their respective per-quarter logic.
+
+### Prior-spend-row source filter
+
+> **A path-dependent `SpendingRule` may only read prior `spend` rows
+> where `source == its own rule source`.**
+
+Path-dependent rules (`SmoothingRule`, `OwlRule`) read their own
+prior outflows from the closed ledger to recover `spend_{t-1}` or
+the prior year's `annual_spend`. The source filter prevents a rule
+from reacting to spend history produced by a *different* rule —
+e.g., if a user switches `spending.rule` mid-horizon (not currently
+supported, but cheap to defend against here) the new rule will not
+inadvertently treat the previous rule's outflows as its own
+trajectory.
+
+Phase 4a wires per-rule source identifiers on emission, mirroring the
+existing `impl:<engine>` and `pacing:<fund>` conventions:
+
+* `FlatRealRule` emits `source="spending:flat_real"`
+* `SmoothingRule` emits `source="spending:smoothing"`
+* `OwlRule` emits `source="spending:owl"`
+
+Rules read prior rows by filtering `flow_type == "spend"` AND
+`source == "spending:<self>"`. This is a **rule-side contract**, not
+an orchestrator-enforced one — the orchestrator continues to emit
+whatever the rule produces, and the path-dependent rule polices its
+own reads.
+
+### Storage rule (load-bearing for Phase 4a)
+
+> **No orchestrator-side prior_spend state. No q0 special emission
+> outside the rule. The rule owns q0 initialization.**
+
+Combined with the closed-prior-quarter view, this keeps the ledger as
+the only state spine — the same rule that has held since Phase 1.
+
 ### Ledger capability addition
 
 The current `QuarterlyLedger.finalize()` is one-shot and locks
@@ -1339,6 +1402,35 @@ what changed, why, impact on outputs, backward-compatibility flag.
   updates this file from now on; entries are appended, never rewritten.
 * **Impact on outputs.** None.
 * **Backward-compatible.** Yes.
+
+### 2026-05-01 — Phase 4 design: q0 + prior-spend recovery rules
+
+* **What.** Three additions to the §Phase 4 design (pre-implementation)
+  section, all per user directive:
+  1. **q0 initialization rule.** `q0 is initialization, not a
+     guardrail decision.` At the first quarter, every rule returns
+     `annual_spend_usd / 4` with no guardrail check, no inflation
+     step, no special ledger event. The rule owns q0 — the
+     orchestrator never seeds it from outside.
+  2. **Prior-spending recovery via Option A.** Path-dependent rules
+     recover `spend_{t-1}` (or prior-year `annual_spend`) from their
+     own closed ledger rows; no orchestrator-threaded state. Adds the
+     binding rule-side contract: *"A path-dependent `SpendingRule`
+     may only read prior `spend` rows where `source == its own rule
+     source`."* Phase 4a wires per-rule source identifiers
+     (`spending:flat_real`, `spending:smoothing`, `spending:owl`)
+     mirroring the existing `impl:<engine>` and `pacing:<fund>`
+     conventions.
+  3. **Storage rule (load-bearing).** *"No orchestrator-side
+     prior_spend state. No q0 special emission outside the rule. The
+     rule owns q0 initialization."* — promoted to its own callout
+     so the design can't drift toward an orchestrator-side
+     baseline-tracker in implementation.
+* **Why.** Closes the two open boundary questions before any 4a
+  code lands. Both directly preserve the ledger-as-spine rule that
+  has held since Phase 1.
+* **Impact on outputs.** None today.
+* **Backward-compatible.** Yes (docs only).
 
 ### 2026-05-01 — Phase 4 design locked (pre-implementation)
 
