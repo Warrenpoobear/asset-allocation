@@ -447,6 +447,49 @@ output. Each entry separates **model behavior** (what the code does) from
   a symlink to a Linux-fs venv. Documented to save the next user the
   same 10 minutes.
 
+### L11 — Synthetic 2-row dummy returns frame in Riskfolio adapter
+
+* **Model behavior.** `riskfolio.Portfolio(returns=df)` requires a
+  returns frame at construction time for shape / index inference, even
+  when the optimizer is later told to use externally-provided statistics
+  via `optimization(..., hist=False)`. The adapter feeds it a 2-row
+  zero-filled DataFrame (`_synthetic_returns()` in
+  `allocation/riskfolio_adapter.py`) and then overwrites `port.mu` and
+  `port.cov` with the analytic CMA before calling `optimization()`.
+* **Real-world interpretation.** Acceptable for the wiring as Phase 3a
+  ships, but it is a coupling point against riskfolio's internals: if a
+  future riskfolio version reads the returns frame for anything beyond
+  shape/index (e.g. shrinkage estimators, sample-based risk measures,
+  whitening), the synthetic zeros could silently produce wrong answers.
+  Two consequences for downstream work:
+  1. The adapter is currently pinned at `riskfolio-lib==7.2.1`. Any
+     bump must include a parity-vs-known-good-CMA test, not just the
+     structural parity that exists today.
+  2. The right long-term fix is to feed riskfolio a properly-shaped
+     historical returns frame derived from the CMA (e.g. by Cholesky-
+     factoring `cov` and emitting deterministic synthetic samples whose
+     sample mean and sample cov match the CMA exactly) — deferred
+     until a real CMA pipeline lands.
+
+### L12 — Non-fatal "convert self.cov to a positive definite matrix" warning
+
+* **Model behavior.** Every `RiskfolioAdapter.fit()` call prints
+  `You must convert self.cov to a positive definite matrix` to stderr.
+  The covariance matrix the adapter actually hands riskfolio (a diagonal
+  matrix of `vol²` against an identity correlation matrix) is positive
+  definite by construction; the warning fires from riskfolio's internal
+  eigenvalue check after it has run `assets_stats(method_mu="hist",
+  method_cov="hist")` against the synthetic 2-row frame from L11
+  (sample covariance of two zero rows is the zero matrix, which is
+  PSD but not PD). The optimization itself uses our overwritten
+  `port.cov`, not the sample one, and converges correctly.
+* **Real-world interpretation.** Cosmetic noise as long as L11 holds.
+  Suppressing it now would mask a genuine cov problem later, so it is
+  left visible. The integration test asserts `weights() != NaN` and
+  `sum(weights) ≈ 1` after `fit()`, so a warning that ever became
+  fatal would surface as a test failure rather than a silent
+  miscalculation.
+
 ---
 
 ## Validation & Testing
@@ -498,10 +541,26 @@ has crept in.
 ### Adapter parity
 
 Per SPEC §6 P3 exit gate, every non-stub adapter ships with a parity test
-gated on `pytest.importorskip(<backend>)`. The CI `adapters` job installs
-the optional extra and runs the parity suite + a real `engine=<adapter>`
-end-to-end orchestrator run. Parity is structural (not numerical) — see
-*Adapter parity contract* above.
+gated on `pytest.importorskip(<backend>)`. Parity is structural (not
+numerical) — see *Adapter parity contract* above.
+
+### CI workflow
+
+`.github/workflows/ci.yml` runs two jobs on `ubuntu-latest`:
+
+| job | install set | runs |
+|---|---|---|
+| `core` | `pip install -r requirements-dev.txt && pip install -e .` (no optional deps) | ruff check + format-check, full pytest with coverage gate ≥ 80% on the high-leverage modules, end-to-end determinism check (run twice + compare parquet content modulo `run_id`) |
+| `adapters` | `pip install -r requirements-dev.txt && pip install -e ".[riskfolio]"` | adapter parity test (`tests/test_riskfolio_adapter.py`), real `engine=riskfolio` end-to-end run against `configs/base.yaml` |
+
+`adapters` is gated on `core` passing first (`needs: core`). Splitting the
+install set keeps the fast lane fast: `core` installs ~20 packages, while
+`adapters` pulls 80+ transitive deps (matplotlib, numba, statsmodels,
+vectorbt, ipywidgets, …). When new optional adapters land in Phase 3+,
+either the `adapters` job grows to install all extras together, or
+additional jobs (`adapters-cvxportfolio`, `adapters-stairs`, …) are
+added — the choice will be made when the second adapter ships, based on
+whether the extras can coexist in one venv without resolution conflicts.
 
 ---
 
@@ -613,25 +672,71 @@ what changed, why, impact on outputs, backward-compatibility flag.
 
 ### 2026-05-01 — Phase 3a / Riskfolio adapter (`9b35051`)
 
-* **What.** First non-stub allocation adapter: `RiskfolioAdapter`
-  (riskfolio-lib 7.2.1 + cvxpy 1.8.2). Solves min-variance with long-only
-  box bounds. Lazy backend import. Allocation factory dispatches by
-  `allocation.engine`. Schema widened to `Literal["stub", "riskfolio"]`.
-  `numpy>=2,<3` and `pyarrow>=17,<24` (forced by riskfolio's transitive
-  deps; pyarrow 15 was numpy-1-only ABI). `[project.optional-dependencies]
-  riskfolio` keeps the heavy install opt-in. CI split into `core` +
-  `adapters` jobs.
+* **What.**
+  * First non-stub `AllocationAdapter` implementation:
+    `aa_model.allocation.riskfolio_adapter.RiskfolioAdapter`
+    (riskfolio-lib 7.2.1 + cvxpy 1.8.2). Solves
+    `model="Classic", rm="MV", obj="MinRisk", hist=False`
+    against a CMA + long-only box bounds.
+  * **Engine flag.** `configs/base.yaml::allocation.engine` widened
+    from `Literal["stub"]` to `Literal["stub", "riskfolio"]`. Adapter
+    selection runs through `aa_model.allocation.factory.make_allocator`
+    (no orchestrator-level branching on engine identity).
+  * **Optional dependency behavior.**
+    * Backend `import riskfolio as rp` is lazy — performed inside
+      `RiskfolioAdapter._solve()`, not at module top level. The
+      package therefore imports cleanly without `riskfolio-lib`
+      installed; the only failure mode is calling `fit()` with
+      `engine=riskfolio` when the backend is missing.
+    * Install set: `pip install -e ".[riskfolio]"` from the new
+      `[project.optional-dependencies] riskfolio` group, pinning
+      `riskfolio-lib==7.2.1`.
+    * Tests are gated on `pytest.importorskip("riskfolio")` so the
+      core test suite still passes on a core-only install.
+  * **Fallback CMA.** When called with an empty `CMA` (Phase 1's
+    orchestrator default), the adapter synthesizes per-bucket
+    annualized vols from a hard-coded table
+    (`_DEFAULT_VOL_ANNUAL`: cash 0.5%, public_bond 4%,
+    public_equity 16%, pe_buyout 20%, pe_venture 30%,
+    pe_growth 22%, pe_infra 12%, pe_re 14%, pe_pc 10%,
+    fallback 15%) and an identity correlation matrix. Expected
+    returns default to a zero vector (irrelevant for `MinRisk`).
+    These values are placeholders to make the wiring testable, not
+    investment views — see L3 / L4.
+  * **Synthetic 2-row dummy returns frame** at `Portfolio(returns=...)`
+    construction (overridden by `port.mu`/`port.cov` before
+    `optimization`) — see L11.
+  * **Known riskfolio warning** `You must convert self.cov to a
+    positive definite matrix` — non-fatal; see L12.
+  * **Stub parity contract** is structural (sums-to-1, range, no NaN,
+    binding-equality pinning) — see *Core Invariants / Adapter parity
+    contract*. Tested in `tests/test_riskfolio_adapter.py` (10 tests,
+    all gated on `pytest.importorskip("riskfolio")`).
+  * **Numpy / pyarrow bumps.** `numpy>=2,<3` and `pyarrow>=17,<24`
+    (forced by riskfolio's transitive deps; pyarrow 15 was numpy-1-only
+    ABI). Existing 61 tests still green under numpy 2.4.4 + pyarrow
+    23.0.1, including the TA golden-CSV byte-equality regression.
+  * **CI** split into `core` (no optional deps) and `adapters`
+    (`pip install -e ".[riskfolio]"` + parity test + real
+    `engine=riskfolio` end-to-end run). `adapters` is gated on `core`.
 * **Why.** Phase 3a spec brief — first external optimizer adapter behind
   the ABC. Discipline guardrails: pure adapter, no shared state, no
   caches, no ledger access; lazy backend import; structural-not-numerical
   parity contract with the stub.
 * **Impact on outputs.**
-  * Default config (engine=stub) is unaffected. Existing tests still
+  * Default config (`engine: stub`) is unaffected. Existing tests still
     pass under the bumped numpy / pyarrow.
   * Setting `allocation.engine: riskfolio` against the base fixture
-    produces a ~98% cash allocation (MinRisk against the placeholder
-    vol vector) and a `final_nav = $107.4M` (vs $114.8M for stub) —
-    expected MinRisk behavior, not investment guidance. See L3 / L4.
+    produces this *observed difference* vs stub:
+    * end-of-horizon allocation: **cash 98.31%, public_bond 1.54%,
+      public_equity 0.10%, pe_buyout 0.06%** (vs stub config's
+      5/20/50/25)
+    * final NAV: **$107.4M** (vs stub's $114.8M)
+    * cumulative return: **+7.36%** (vs stub's +14.78%)
+
+    This is the expected MinRisk solution against the placeholder vol
+    vector + identity correlation; it is **not** investment guidance.
+    See L3 / L4.
   * 10 new parity tests in `test_riskfolio_adapter.py`, all gated on
     `pytest.importorskip("riskfolio")`.
 * **Backward-compatible.** Yes for the public API. The schema widening
@@ -639,11 +744,40 @@ what changed, why, impact on outputs, backward-compatibility flag.
   unchanged). Runtime breakage is possible only for callers who pin
   `numpy<2` or `pyarrow<17` outside this repo.
 
-### 2026-05-01 — `MODEL_DOCUMENTATION.md` introduced (this entry)
+### 2026-05-01 — `MODEL_DOCUMENTATION.md` introduced (`c724e12`)
 
 * **What.** Created this document at the repo root as the authoritative
   record of model design, assumptions, limitations, and changes.
 * **Why.** User directive — every commit that changes model behavior
   updates this file from now on; entries are appended, never rewritten.
 * **Impact on outputs.** None.
+* **Backward-compatible.** Yes.
+
+### 2026-05-01 — Phase 3a documentation expansion (gating P3b)
+
+* **What.** Documentation-only update flagged by the Phase 3a audit
+  before P3b can begin:
+  * New limitation **L11 — Synthetic 2-row dummy returns frame in
+    Riskfolio adapter** documenting the coupling against riskfolio's
+    `Portfolio(returns=...)` constructor and the path forward (proper
+    Cholesky-derived synthetic samples once a real CMA pipeline lands).
+  * New limitation **L12 — Non-fatal "convert self.cov to a positive
+    definite matrix" warning**, including the eigenvalue-check
+    mechanism that triggers it and why suppressing it would mask
+    future genuine cov problems.
+  * New §Validation & Testing / *CI workflow* subsection making the
+    `core` vs `adapters` split explicit, including the rule for
+    extending it as more adapters land.
+  * The Phase 3a change-log entry above (`9b35051`) was expanded
+    to enumerate adapter purpose, engine flag, optional-dependency
+    behavior, fallback CMA assumptions, the synthetic returns frame,
+    the riskfolio warning, the structural parity contract, the
+    observed output difference vs stub, the numpy/pyarrow bumps, and
+    the CI split — point-by-point against the Phase 3a audit
+    checklist.
+* **Why.** Audit verdict required this update before P3b
+  (cvxportfolio) starts. The synthetic-returns-frame coupling was
+  also called out specifically as a future numerical risk and now has
+  an explicit mitigation path.
+* **Impact on outputs.** None (docs-only).
 * **Backward-compatible.** Yes.
