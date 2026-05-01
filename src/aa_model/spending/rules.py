@@ -36,20 +36,39 @@ class FlatRealRule(SpendingRule):
 
 
 class SmoothingRule(SpendingRule):
-    """Smoothed spending policy.
+    """Exponentially-weighted spending smoother.
 
-    Phase 1 supports only ``smoothing.weight == 0``, in which case spending
-    collapses exactly to :class:`FlatRealRule`. Non-zero weights require
-    rolling-NAV smoothing, which depends on a NAV trajectory the orchestrator
-    only knows quarter-by-quarter — that wiring is deferred to a later phase.
+    The "target" path is the same inflated quarterly series :class:`FlatRealRule`
+    would emit. The smoothed series is::
+
+        spend_0 = target_0
+        spend_t = w * target_t + (1 - w) * spend_{t-1}    (t > 0)
+
+    where ``w = config.smoothing.weight`` and is in ``[0, 1]``. ``w = 1``
+    tracks ``target`` exactly (equivalent to flat-real). ``w = 0`` freezes
+    spending at the initial target and never re-anchors. Floor / ceiling
+    clip each smoothed value.
     """
 
     def quarterly_outflows(self, ledger: QuarterlyLedger, params: SpendingParams) -> pd.Series:
-        if params.config.smoothing.weight != 0.0:
-            raise NotImplementedError(
-                "smoothing.weight > 0 requires NAV-trajectory smoothing — " "deferred past Phase 1"
-            )
-        return FlatRealRule().quarterly_outflows(ledger, params)
+        cfg = params.config
+        w = cfg.smoothing.weight
+        idx = [params.start_quarter + i for i in range(params.num_quarters)]
+
+        targets: list[float] = []
+        for i in range(params.num_quarters):
+            year_index = i // 4
+            inflated_annual = cfg.annual_spend_usd * (1.0 + cfg.inflation_pct) ** year_index
+            targets.append(inflated_annual / 4.0)
+
+        out: list[float] = []
+        prev = targets[0] if targets else 0.0
+        for i, tgt in enumerate(targets):
+            cur = tgt if i == 0 else (w * tgt + (1.0 - w) * prev)
+            cur = max(cfg.floor_usd, min(cfg.ceiling_usd, cur))
+            out.append(cur)
+            prev = cur
+        return pd.Series(out, index=idx, dtype=float, name="quarterly_outflow_usd")
 
 
 def make_rule(name: str) -> SpendingRule:
