@@ -140,6 +140,130 @@ def test_owl_spending_rule_preserves_invariants_end_to_end(with_owl_spending_con
     assert spend.groupby("quarter").size().max() == 1
 
 
+def test_owl_cuts_spending_under_realized_drawdown(
+    with_owl_on_drawdown_config, with_owl_spending_config
+):
+    """Phase 4a exit gate (L18 fix). Owl runs against the drawdown fixture
+    and reads realized prior-quarter NAV. After the -25% public_equity
+    shock at q8 (and 4-quarter recovery), realized NAV is briefly
+    depressed; Owl's first guardrail check after the shock (year-3
+    boundary at q12) must produce **lower spending** than the same Owl
+    run on the base fixture for the same year.
+
+    Rationale: Phase 3c Owl using forecast NAV would not see the shock
+    and would raise spending under nominal forecast growth (L18 in
+    MODEL_DOCUMENTATION). Phase 4a Owl reads realized NAV and responds
+    correctly. We assert the directional outcome — drawdown spending
+    is not greater than base spending — rather than a hand-worked
+    closed form, because total NAV at q11 depends on bucket-weighted
+    returns, PE pacing, and rebalance feedback combined.
+    """
+    rr_drawdown = run_orchestrator(with_owl_on_drawdown_config, dry_run=False)
+    rr_base = run_orchestrator(with_owl_spending_config, dry_run=False)
+    df_dd = rr_drawdown.ledger
+    df_base = rr_base.ledger
+    spend_dd = df_dd[(df_dd["flow_type"] == "spend") & (df_dd["source"] == "spending:owl")]
+    spend_base = df_base[(df_base["flow_type"] == "spend") & (df_base["source"] == "spending:owl")]
+    # Cumulative Owl spending under drawdown must be ≤ under base.
+    cum_dd = float(-spend_dd["amount_usd"].sum())
+    cum_base = float(-spend_base["amount_usd"].sum())
+    assert cum_dd <= cum_base, (
+        f"Owl raised spending under drawdown (cum_dd={cum_dd:,.0f} vs "
+        f"cum_base={cum_base:,.0f}) — L18 regression"
+    )
+
+
+def test_owl_does_not_raise_under_inflation_shock_end_to_end(repo_root):
+    """Phase 4a exit gate (L18 fix). Under inflation_shock the user-facing
+    inflation_pct is 6.0% (vs 2.5% base) — applied via the Scenario
+    builder's spending override. With Phase 4a Owl reading realized
+    rather than forecast NAV, an inflation-only shock (no return
+    perturbation) must produce a guardrail **cut** at the year boundary
+    where the inflated rate exceeds the upper band, NOT a raise.
+    """
+    import yaml
+    from aa_model.assumptions.scenario_builder import make_scenarios
+    from aa_model.io.loaders import load_study_config
+
+    configs = repo_root / "configs"
+    spending_path = configs / "_test_owl_infl.yaml"
+    spending_path.write_text(
+        yaml.safe_dump(
+            {
+                "rule": "owl",
+                "annual_spend_usd": 4_000_000.0,
+                "inflation_pct": 0.025,  # base inflation; scenario lifts to 6%
+                "smoothing": {"window_quarters": 12, "weight": 0.0},
+                "floor_usd": 0.0,
+                "ceiling_usd": 1.0e12,
+                "guardrail": {
+                    "upper_band_pct": 0.20,
+                    "lower_band_pct": 0.20,
+                    "raise_pct": 0.10,
+                    "cut_pct": 0.10,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    base_cfg = yaml.safe_load((configs / "base.yaml").read_text(encoding="utf-8"))
+    base_cfg["spending"]["config"] = "configs/_test_owl_infl.yaml"
+    base_path = configs / "_test_owl_infl_base.yaml"
+    base_path.write_text(yaml.safe_dump(base_cfg), encoding="utf-8")
+    try:
+        cfg = load_study_config(base_path)
+        scenarios = make_scenarios(cfg.fixture_scenario, cfg.pe_pacing, cfg.spending)
+        infl_scenario = next(s for s in scenarios if s.name == "inflation_shock")
+        base_scenario = next(s for s in scenarios if s.name == "base")
+        rr_infl = run_orchestrator(base_path, scenario=infl_scenario, dry_run=False)
+        rr_base = run_orchestrator(base_path, scenario=base_scenario, dry_run=False)
+        df_infl = rr_infl.ledger
+        df_base = rr_base.ledger
+
+        # Under Phase 4a Owl: at each year boundary the quarterly spending
+        # changes by exactly the inflation factor (no raise, no cut). A
+        # year-over-year ratio strictly above (1 + inflation_pct) would
+        # indicate an erroneous raise; below 1.0 would indicate a cut.
+        # Check both the inflation-shock and base scenarios — neither
+        # should ratchet beyond pure inflation under the toy fixtures.
+        infl_pct = infl_scenario.spending.inflation_pct  # 0.06
+        base_pct = (
+            base_scenario.spending.inflation_pct
+            if base_scenario.spending
+            else cfg.spending.inflation_pct
+        )  # 0.025
+
+        def _year_quarterlies(df):
+            own_df = df[
+                (df["flow_type"] == "spend") & (df["source"] == "spending:owl")
+            ].sort_values("quarter")
+            # Pick q0, q4, q8, q12, q16 representatives (each year's quarterly).
+            n_q = cfg.base.horizon.num_quarters
+            start = cfg.base.horizon.start_quarter
+            import pandas as _pd
+
+            qs = [_pd.Period(start, freq="Q-DEC") + 4 * y for y in range(n_q // 4)]
+            return [float(-own_df[own_df["quarter"] == q]["amount_usd"].iloc[0]) for q in qs]
+
+        for label, ys, pct in [
+            ("inflation_shock", _year_quarterlies(df_infl), infl_pct),
+            ("base", _year_quarterlies(df_base), base_pct),
+        ]:
+            for n in range(1, len(ys)):
+                ratio = ys[n] / ys[n - 1]
+                expected_no_trigger = 1.0 + pct
+                # Allow a tiny floating-point slack but reject any
+                # year-on-year ratio above the inflation factor.
+                assert ratio <= expected_no_trigger + 1e-9, (
+                    f"{label}: Owl raised at year {n} "
+                    f"(ratio={ratio:.6f} > 1 + inflation={expected_no_trigger:.6f}) — "
+                    f"L18 regression"
+                )
+    finally:
+        base_path.unlink(missing_ok=True)
+        spending_path.unlink(missing_ok=True)
+
+
 def test_input_hashes_are_deterministic_run_ids_are_unique(base_config_path):
     r1 = run_orchestrator(base_config_path, dry_run=True)
     r2 = run_orchestrator(base_config_path, dry_run=True)

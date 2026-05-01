@@ -126,10 +126,7 @@ def _build_ledger(cfg: StudyConfig, run_id: str) -> tuple[QuarterlyLedger, dict[
     running_nav: dict[str, float] = dict(initial)
 
     rule = make_rule(cfg.spending.rule)
-    spending = rule.quarterly_outflows(
-        ledger,
-        SpendingParams(config=cfg.spending, start_quarter=start_q, num_quarters=n_q),
-    )
+    spend_params = SpendingParams(config=cfg.spending, start_quarter=start_q, num_quarters=n_q)
 
     alloc = make_allocator(cfg.allocation, engine=cfg.base.allocation.engine)
     alloc.fit(returns=pd.DataFrame(), cma=CMA(), constraints=Constraints())
@@ -157,6 +154,13 @@ def _build_ledger(cfg: StudyConfig, run_id: str) -> tuple[QuarterlyLedger, dict[
 
     for i in range(n_q):
         q = start_q + i
+
+        # 0. Phase 4a: per-quarter spending decision against the closed
+        # ledger view through q-1. Computed before any q rows are emitted
+        # so the rule cannot accidentally observe partial current-quarter
+        # state. The dollar amount is buffered and emitted in canonical
+        # order at step 6 (spend) below.
+        spend_amt = float(rule.quarterly_outflow_at(ledger, spend_params, q))
 
         # 1. inflow
         if ext_inflow_amt != 0.0:
@@ -228,15 +232,17 @@ def _build_ledger(cfg: StudyConfig, run_id: str) -> tuple[QuarterlyLedger, dict[
                     )
                     running_nav[sleeve] = running_nav.get(sleeve, 0.0) + mark
 
-        # 6. spend
-        spend_amt = float(spending.iloc[i])
+        # 6. spend (using the value computed at step 0 from the closed
+        # prior-quarter view; emitted with the rule's own source id so
+        # path-dependent rules can recover their own history per the
+        # source-filter contract).
         if spend_amt != 0.0:
             ledger.add(
                 quarter=q,
                 bucket="cash",
                 flow_type="spend",
                 amount_usd=-spend_amt,
-                source="spending",
+                source=rule.SOURCE_ID,
             )
             running_nav["cash"] = running_nav.get("cash", 0.0) - spend_amt
 

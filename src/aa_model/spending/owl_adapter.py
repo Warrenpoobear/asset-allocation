@@ -1,71 +1,54 @@
-"""Owl spending rule (SPEC §6 Phase 3c).
+"""Owl spending rule (SPEC §6 Phase 3c, Phase 4a fix for L15 / L18).
 
 "Owl" is the project codename for a Guyton-Klinger–style guardrail
-spending policy — the missing ``guardrail`` rule in `spending/rules.py`'s
-type comment, repackaged behind the existing :class:`SpendingRule` ABC for
-adapter-discipline parity with the other Phase 3 adapters. There is no
-external "Owl" Python library; the file lives at
-``spending/owl_adapter.py`` for consistency with §4 layout.
+spending policy. There is no external "Owl" Python library.
 
-Behavior
-========
+Phase 4a behavior — realized-NAV feedback
+=========================================
 
 For each quarter ``t = 0..N-1``:
 
-* ``annual_spend_t`` starts at ``cfg.annual_spend_usd`` and evolves only
-  at year boundaries (``t % 4 == 0`` for ``t > 0``) in two steps:
-  1. inflation update: ``annual_spend_t = annual_spend_{t-1} · (1+inflation_pct)``
-  2. guardrail check, against forecast NAV at ``t``:
+* **q0 (initialization)**: return ``cfg.annual_spend_usd / 4``. No
+  guardrail check, no inflation step, no special ledger event. Per
+  Phase 4 design: *q0 is initialization, not a guardrail decision.*
+* **mid-year (t % 4 != 0)**: return the same quarterly amount this
+  rule emitted at ``t - 1`` (within-year constancy).
+* **year boundary (t > 0, t % 4 == 0)**:
 
-         current_rate     = annual_spend_t / forecast_nav_t
-         initial_rate     = annual_spend_0 / initial_nav_total
-         forecast_nav_t   = initial_nav_total · (1 + forecast_quarterly_return_pct)^t
+      annual_spend_t = annual_spend_{year_t-1} · (1 + inflation_pct)
+      nav_realized   = ledger.end_nav_through(t - 1).sum()
+      current_rate   = annual_spend_t / nav_realized
+      initial_rate   = cfg.annual_spend_usd / sum(ledger.initial_nav.values())
 
-         if current_rate < initial_rate · (1 - lower_band_pct):
-             # portfolio grew faster than spending → ratchet up
-             annual_spend_t *= (1 + raise_pct)
-         elif current_rate > initial_rate · (1 + upper_band_pct):
-             # portfolio shrank vs spending → ratchet down
-             annual_spend_t *= (1 - cut_pct)
-* Within a year (``t % 4 in (1,2,3)``), spending is constant at
-  ``annual_spend_year / 4`` per quarter.
-* Floor / ceiling clip the per-quarter value (same as flat_real / smoothing).
+      if current_rate < initial_rate · (1 - lower_band_pct):
+          annual_spend_t *= (1 + raise_pct)
+      elif current_rate > initial_rate · (1 + upper_band_pct):
+          annual_spend_t *= (1 - cut_pct)
 
-Path dependence
-===============
+  Both ``annual_spend_{year_t-1}`` and ``nav_realized`` are read
+  from the closed ledger via :meth:`QuarterlyLedger.closed_through`
+  and :meth:`QuarterlyLedger.end_nav_through` — no shared state, no
+  forecast assumption.
 
-Same one-step-back shape as :class:`SmoothingRule`:
-``annual_spend_year_n`` depends on ``annual_spend_year_{n-1}``. There is
-no NAV feedback from the realized run — Owl computes its own
-forward-only NAV forecast from ``forecast_quarterly_return_pct`` and
-``initial_nav`` (see L15 for why).
+Phase 4 discipline
+==================
 
-``forecast_quarterly_return_pct`` is an **exogenous assumption** supplied
-by config; it does NOT derive from fixture returns, the CMA, or any
-scenario perturbation. Two runs with different realized return paths
-(e.g. ``base`` vs ``public_drawdown``) but the same forecast assumption
-produce identical Owl spending series.
+* **Pure**: no module-level state, no caches.
+* **No ledger mutation.** May read the ledger passed into the
+  ``SpendingRule`` interface (per Phase 3+ adapter discipline) but
+  may not retain, mutate, or access global state.
+* **Source filter.** Reads only its own prior spend rows
+  (``source == "spending:owl"``); other rules' history is ignored
+  even if a config switch left it in the ledger.
+* **Closed-prior-quarter view only.** Sees ``ledger[quarter <= q-1]``;
+  never reads the current quarter's flows.
 
-The rule is therefore a **pure function** of
-``(initial_nav, SpendingConfig + GuardrailConfig, num_quarters,
-start_quarter)``: same inputs → same output series. No randomness, no
-caching, no ledger mutation, no lookahead.
-
-Discipline (Phase 3 guardrails)
-===============================
-
-* **Pure.** No module-level state, no caches.
-* **No ledger mutation.** Reads ``ledger.initial_nav`` only — the same
-  read-only access the existing :class:`FlatRealRule` and
-  :class:`SmoothingRule` are entitled to via the ABC's ``ledger``
-  parameter.
-* **No path dependence beyond smoothing-style.** Within-quarter
-  computation depends only on the prior year's annual spending;
-  the year boundary at index ``i`` uses ``forecast_nav_i`` and
-  ``annual_spend_{year-1}``.
-* **No external dependency.** This is not an adapter to a third-party
-  library; it is the canonical implementation of the missing guardrail
-  rule.
+Resolves L15 (forecast-only NAV) and L18 (Owl misreads inflation
+shock as headroom). The forecast field
+``forecast_quarterly_return_pct`` was removed from
+:class:`GuardrailConfig` in Phase 4a; existing configs that set it
+will fail schema validation, which is the right loud failure since
+the parameter became inert.
 """
 
 from __future__ import annotations
@@ -74,12 +57,20 @@ import pandas as pd
 
 from aa_model.integration.ledger import QuarterlyLedger
 from aa_model.spending.base import SpendingParams, SpendingRule
+from aa_model.spending.rules import _quarter_offset, _read_own_prior_spend
 
 
 class OwlRule(SpendingRule):
-    """Guyton-Klinger guardrail spending, deterministic minimum form."""
+    """Guyton-Klinger guardrail spending against realized prior-quarter NAV."""
 
-    def quarterly_outflows(self, ledger: QuarterlyLedger, params: SpendingParams) -> pd.Series:
+    SOURCE_ID = "spending:owl"
+
+    def quarterly_outflow_at(
+        self,
+        ledger: QuarterlyLedger,
+        params: SpendingParams,
+        quarter: pd.Period,
+    ) -> float:
         cfg = params.config
         if cfg.guardrail is None:
             raise ValueError("OwlRule requires spending.guardrail config")
@@ -89,27 +80,35 @@ class OwlRule(SpendingRule):
         if initial_nav_total <= 0.0:
             raise ValueError(f"OwlRule requires positive initial NAV; got {initial_nav_total}")
 
-        initial_annual_spend = float(cfg.annual_spend_usd)
-        initial_rate = initial_annual_spend / initial_nav_total
+        # q0 initialization — no guardrail, no inflation, no ledger read.
+        # Floor / ceiling clip is applied so a rule emitting a clipped value
+        # at q0 still satisfies its config bounds and the wrapper's prior-row
+        # recovery sees the clipped value at q1.
+        if quarter == params.start_quarter:
+            quarterly = cfg.annual_spend_usd / 4.0
+            return max(cfg.floor_usd, min(cfg.ceiling_usd, quarterly))
 
-        idx = [params.start_quarter + i for i in range(params.num_quarters)]
-        out: list[float] = []
-        annual_spend = initial_annual_spend
+        offset = _quarter_offset(quarter, params.start_quarter)
+        quarter_in_year = offset % 4
+        prior_q = quarter - 1
+        prior_quarterly = _read_own_prior_spend(ledger, self.SOURCE_ID, prior_q)
 
-        for i in range(params.num_quarters):
-            quarter_in_year = i % 4
-            # At each year boundary except t=0: inflate, then check guardrail.
-            if i > 0 and quarter_in_year == 0:
-                annual_spend *= 1.0 + cfg.inflation_pct
-                forecast_nav_i = initial_nav_total * (1.0 + gr.forecast_quarterly_return_pct) ** i
-                current_rate = annual_spend / forecast_nav_i
-                if current_rate < initial_rate * (1.0 - gr.lower_band_pct):
-                    annual_spend *= 1.0 + gr.raise_pct
-                elif current_rate > initial_rate * (1.0 + gr.upper_band_pct):
-                    annual_spend *= 1.0 - gr.cut_pct
+        # Mid-year: within-year constancy. Same quarterly as prior.
+        if quarter_in_year != 0:
+            return max(cfg.floor_usd, min(cfg.ceiling_usd, prior_quarterly))
 
-            quarterly = annual_spend / 4.0
-            quarterly = max(cfg.floor_usd, min(cfg.ceiling_usd, quarterly))
-            out.append(quarterly)
+        # Year boundary: inflate, then guardrail-check vs realized NAV.
+        prior_annual = prior_quarterly * 4.0
+        annual_spend = prior_annual * (1.0 + cfg.inflation_pct)
 
-        return pd.Series(out, index=idx, dtype=float, name="quarterly_outflow_usd")
+        nav_realized = float(ledger.end_nav_through(prior_q).sum())
+        if nav_realized > 0.0:
+            initial_rate = cfg.annual_spend_usd / initial_nav_total
+            current_rate = annual_spend / nav_realized
+            if current_rate < initial_rate * (1.0 - gr.lower_band_pct):
+                annual_spend *= 1.0 + gr.raise_pct
+            elif current_rate > initial_rate * (1.0 + gr.upper_band_pct):
+                annual_spend *= 1.0 - gr.cut_pct
+
+        quarterly = annual_spend / 4.0
+        return max(cfg.floor_usd, min(cfg.ceiling_usd, quarterly))

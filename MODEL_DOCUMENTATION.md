@@ -707,7 +707,19 @@ output. Each entry separates **model behavior** (what the code does) from
   Treat this as a Phase 4+ task and a hard prerequisite, not an
   optimization to add later.
 
-### L15 — Owl reacts to forecasted NAV, not realized NAV
+### L15 — Owl reacts to forecasted NAV, not realized NAV — [RESOLVED 2026-05-01, Phase 4a]
+
+> **Status: RESOLVED in Phase 4a** (commit landing this entry).
+> `OwlRule` now reads ``ledger.end_nav_through(quarter - 1)`` for the
+> realized prior-quarter total NAV at every year boundary. The
+> ``forecast_quarterly_return_pct`` field has been removed from
+> `GuardrailConfig`. The exit-gate test
+> `test_owl_cuts_spending_under_realized_drawdown` pins Owl's response
+> to a real shock; cumulative Owl spending under `public_drawdown` is
+> now strictly ≤ cumulative Owl spending under `base`.
+
+The original Phase 3c text follows for audit-trail purposes:
+
 
 * **Model behavior.** `OwlRule` computes its guardrail trigger against a
   deterministic forward NAV forecast
@@ -797,7 +809,23 @@ ship one without the other.
   metrics remain meaningful. Documented here so the comparison
   report's pivot tables are not misread.
 
-### L18 — Owl misreads inflation shock as "headroom" and raises spending
+### L18 — Owl misreads inflation shock as "headroom" and raises spending — [RESOLVED 2026-05-01, Phase 4a]
+
+> **Status: RESOLVED in Phase 4a** (commit landing this entry).
+> The exit-gate test
+> `test_owl_does_not_raise_under_inflation_shock_end_to_end` walks
+> year-over-year quarterly spending under both `inflation_shock` and
+> `base` and asserts the year-over-year ratio never exceeds the
+> inflation factor — i.e. Owl never *raises* under either scenario.
+> Empirical Phase 4a behavior under `inflation_shock`: spending
+> tracks pure inflation step-up (factor 1.06 per year), no raise
+> triggered, no cut triggered (rate stays inside the band given
+> realized NAV growing faster than spending). Under a more severe
+> inflation shock or against a stagnant portfolio, Owl now correctly
+> CUTS once the rate breaches the upper band.
+
+The original Phase 3c text follows for audit-trail purposes:
+
 
 * **Model behavior.** The Phase 3 consolidation probe surfaced an
   empirical case where Owl's forecast-only NAV design produces
@@ -1402,6 +1430,89 @@ what changed, why, impact on outputs, backward-compatibility flag.
   updates this file from now on; entries are appended, never rewritten.
 * **Impact on outputs.** None.
 * **Backward-compatible.** Yes.
+
+### 2026-05-01 — Phase 4a / Per-quarter spending API + realized-NAV Owl
+
+* **What.** Implementation of the Phase 4a design locked in the prior
+  commits. Resolves L15 and L18.
+  * **Ledger primitives.** `QuarterlyLedger.closed_through(quarter)`
+    returns a chained read-only view of rows with
+    `quarter <= the given quarter`; the ledger remains appendable.
+    `QuarterlyLedger.end_nav_through(quarter)` returns end-of-quarter
+    NAV per bucket (initial NAV for buckets with no rows). Both
+    factor through a shared `_compute_view` helper; `finalize()` is
+    refactored to use it. No behavioral change to the existing
+    `finalize()` semantics.
+  * **SpendingRule API.** New abstract method
+    `quarterly_outflow_at(ledger, params, quarter) -> float`.
+    `quarterly_outflows(ledger, params) -> pd.Series` is now a default
+    wrapper that constructs a synthetic working ledger and iterates
+    the per-quarter method, threading each result back as a `spend`
+    row so subsequent iterations observe the prior quarter as closed.
+    Phase 1–3 callers (and tests that haven't migrated) continue to
+    work; the orchestrator switches to the per-quarter method
+    directly.
+  * **SOURCE_ID per rule.** Each `SpendingRule` declares its
+    canonical `SOURCE_ID` class attribute (`spending:flat_real`,
+    `spending:smoothing`, `spending:owl`); the orchestrator emits
+    `spend` rows with that source id (replacing the previous
+    hardcoded `"spending"`). The convention mirrors `impl:<engine>`
+    and `pacing:<fund>`.
+  * **Per-rule prior-row source filter.** Path-dependent rules read
+    only their own prior `spend` rows from the closed ledger
+    (`source == self.SOURCE_ID`); a different source raises
+    `RuntimeError`. Prevents Owl from reacting to flat_real history
+    across a config switch (Phase 4 design / prior-spend-row source
+    filter; tested in
+    `test_owl_does_not_react_to_other_rule_spend_rows`).
+  * **Per-rule reimplementations.**
+    - `FlatRealRule` — config-only formula; ignores ledger.
+    - `SmoothingRule` — reads its own prior `spend` row to recover
+      `spend_{t-1}`; computes `w · target_t + (1-w) · spend_{t-1}`.
+    - `OwlRule` — reads `ledger.end_nav_through(prior_q)` for
+      realized end-of-prior-quarter NAV; reads its own prior `spend`
+      row to recover the year's `annual_spend`; applies the
+      year-boundary inflation + guardrail check against **realized**
+      NAV (not forecast). q0 returns `annual_spend / 4` with no
+      guardrail check, no inflation step, no special ledger event
+      (the rule owns q0 initialization end-to-end).
+  * **GuardrailConfig change.** `forecast_quarterly_return_pct`
+    removed. Existing configs that set it now fail schema validation
+    — the right loud failure since the parameter became inert.
+  * **Orchestrator switch.** The per-quarter loop now calls
+    `rule.quarterly_outflow_at(ledger, spend_params, q)` at the start
+    of each quarter (before any q rows are written) and emits the
+    resulting `spend` row at canonical-order position 6 with
+    `source=rule.SOURCE_ID`. The rule observes `ledger[quarter <= q-1]`
+    by construction.
+* **Why.** Phase 4 design / load-bearing rule:
+  *no rule may depend on the quarter it is currently writing*.
+  Resolves L15 (forecast-only NAV) and L18 (Owl misreads inflation
+  shock as headroom). Holds every Phase 4 design rule verbatim — no
+  fixed-point, no inner loop, no sidecar, no API fork, no canonical-
+  order change, no cost-aware optimizer, no fix for L17.
+* **Impact on outputs.**
+  * Default config (rule=flat_real, no guardrail) — **same numerical
+    output** as Phase 3c. flat_real is config-only, ledger-blind; the
+    only on-disk diff is the `source` column on spend rows changed
+    from `"spending"` to `"spending:flat_real"`. Reproducibility
+    test still passes within a single environment.
+  * `rule=owl` — now responds to realized NAV. Under
+    `public_drawdown`, Owl produces strictly lower cumulative
+    spending than under `base`. Under `inflation_shock`, Owl tracks
+    pure inflation step-up (no raise), unlike Phase 3c which
+    incorrectly raised.
+  * 19 Owl tests rewritten for realized-NAV semantics; 4 ledger
+    primitive tests added; 2 exit-gate orchestrator tests added.
+    Total: **106 passed** (was 103; the net is +3 after replacing
+    Phase 3c forecast-based tests with Phase 4a realized-NAV tests).
+* **Backward-compatible.** Public-facing API: yes. Existing
+  `quarterly_outflows(ledger, params)` calls on FlatRealRule continue
+  unchanged. Owl users with configs that set
+  `forecast_quarterly_return_pct` must remove the field. The `source`
+  string on `spend` rows changed; any downstream tool that filters
+  on `source == "spending"` literally will need to filter on
+  `source.startswith("spending:")` instead.
 
 ### 2026-05-01 — Phase 4 design: q0 + prior-spend recovery rules
 

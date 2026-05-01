@@ -151,6 +151,49 @@ def test_finalize_idempotent_and_locks():
         L.add(quarter=q, bucket="a", flow_type="return", amount_usd=1.0, source="cma")
 
 
+def test_closed_through_filters_to_quarter_inclusive():
+    """Phase 4a primitive: closed_through(q) returns rows with
+    quarter <= q with the chain computed; appends after the call still work.
+    """
+    q1 = _q("2026Q1")
+    q2 = _q("2026Q2")
+    L = QuarterlyLedger("r", initial_nav={"a": 100.0}, start_quarter=q1)
+    L.add(quarter=q1, bucket="a", flow_type="return", amount_usd=10.0, source="cma")
+    L.add(quarter=q2, bucket="a", flow_type="return", amount_usd=5.0, source="cma")
+    view_q1 = L.closed_through(q1)
+    assert len(view_q1) == 1
+    assert view_q1.iloc[0]["nav_end_usd"] == 110.0
+    # Append after closed_through must not be locked.
+    q3 = _q("2026Q3")
+    L.add(quarter=q3, bucket="a", flow_type="return", amount_usd=2.0, source="cma")
+    full = L.finalize()
+    assert len(full) == 3
+
+
+def test_closed_through_with_quarter_before_start_returns_empty():
+    q1 = _q("2026Q1")
+    L = QuarterlyLedger("r", initial_nav={"a": 100.0}, start_quarter=q1)
+    L.add(quarter=q1, bucket="a", flow_type="return", amount_usd=10.0, source="cma")
+    view = L.closed_through(q1 - 1)
+    assert view.empty
+
+
+def test_end_nav_through_returns_initial_when_no_rows_for_bucket():
+    q1 = _q("2026Q1")
+    L = QuarterlyLedger("r", initial_nav={"a": 100.0, "b": 50.0}, start_quarter=q1)
+    L.add(quarter=q1, bucket="a", flow_type="return", amount_usd=10.0, source="cma")
+    nav = L.end_nav_through(q1)
+    assert nav["a"] == 110.0
+    assert nav["b"] == 50.0  # unchanged from initial
+
+
+def test_end_nav_through_pre_start_returns_initial():
+    q1 = _q("2026Q1")
+    L = QuarterlyLedger("r", initial_nav={"a": 100.0}, start_quarter=q1)
+    nav = L.end_nav_through(q1 - 1)
+    assert nav["a"] == 100.0
+
+
 def test_end_nav_by_quarter_includes_all_buckets():
     q1 = _q("2026Q1")
     q2 = _q("2026Q2")

@@ -53,6 +53,44 @@ def with_drawdown_config(repo_root):
         dst.unlink(missing_ok=True)
 
 
+def _build_owl_spending_config_under(repo_root, *, fixture_path: str) -> tuple[object, object]:
+    """Internal helper used by Phase 4a exit-gate fixtures: write a
+    base.yaml that points at ``fixture_path`` (a fixture YAML the loader
+    can resolve relative to repo root) and uses the Owl spending rule.
+    Returns (base_path, spending_path) so the caller can clean up.
+    """
+    import yaml
+
+    configs = repo_root / "configs"
+    spending_path = configs / "_test_spending_owl.yaml"
+    spending_path.write_text(
+        yaml.safe_dump(
+            {
+                "rule": "owl",
+                "annual_spend_usd": 4_000_000.0,
+                "inflation_pct": 0.025,
+                "smoothing": {"window_quarters": 12, "weight": 0.0},
+                "floor_usd": 0.0,
+                "ceiling_usd": 1.0e12,
+                "guardrail": {
+                    "upper_band_pct": 0.20,
+                    "lower_band_pct": 0.20,
+                    "raise_pct": 0.10,
+                    "cut_pct": 0.10,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    base_cfg = yaml.safe_load((configs / "base.yaml").read_text(encoding="utf-8"))
+    base_cfg["spending"]["config"] = "configs/_test_spending_owl.yaml"
+    base_cfg["fixtures"]["scenario"] = fixture_path
+    base_path = configs / "_test_owl.yaml"
+    base_path.write_text(yaml.safe_dump(base_cfg), encoding="utf-8")
+    return base_path, spending_path
+
+
 @pytest.fixture
 def with_owl_spending_config(repo_root):
     """Yield a base.yaml inside repo configs/ + a sibling spending YAML
@@ -78,7 +116,6 @@ def with_owl_spending_config(repo_root):
                     "lower_band_pct": 0.20,
                     "raise_pct": 0.10,
                     "cut_pct": 0.10,
-                    "forecast_quarterly_return_pct": 0.018,
                 },
             }
         ),
@@ -89,6 +126,22 @@ def with_owl_spending_config(repo_root):
     base_cfg["spending"]["config"] = "configs/_test_spending_owl.yaml"
     base_path = configs / "_test_owl.yaml"
     base_path.write_text(yaml.safe_dump(base_cfg), encoding="utf-8")
+    try:
+        yield base_path
+    finally:
+        base_path.unlink(missing_ok=True)
+        spending_path.unlink(missing_ok=True)
+
+
+@pytest.fixture
+def with_owl_on_drawdown_config(repo_root):
+    """Phase 4a exit gate: Owl spending rule + drawdown fixture. Used to
+    verify Owl reads realized post-shock NAV and cuts spending instead of
+    raising.
+    """
+    base_path, spending_path = _build_owl_spending_config_under(
+        repo_root, fixture_path="data/fixtures/scenarios/drawdown.yaml"
+    )
     try:
         yield base_path
     finally:

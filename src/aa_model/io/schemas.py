@@ -154,28 +154,22 @@ class SmoothingConfig(BaseModel):
 
 
 class GuardrailConfig(BaseModel):
-    """Phase 3c — config for the Owl (Guyton-Klinger style) guardrail rule.
+    """Owl (Guyton-Klinger) guardrail config.
 
-    Bands are expressed as fractional deviations from the *initial* withdrawal
-    rate (annual_spend / initial_nav at run start). The guardrail check fires
-    only at year boundaries, after applying inflation:
+    Bands are expressed as fractional deviations from the *initial*
+    withdrawal rate (``annual_spend_usd / initial_nav_total`` at run start).
+    The guardrail check fires only at year boundaries, after applying
+    inflation:
 
     * if rate < initial_rate · (1 - lower_band_pct) → raise spending by raise_pct
     * if rate > initial_rate · (1 + upper_band_pct) → cut spending by cut_pct
     * otherwise spending stays at the inflation-adjusted prior level
 
-    NAV used for the rate check is forecast deterministically from
-    ``forecast_quarterly_return_pct`` — Owl does NOT see realized
-    NAV (see L15).
-
-    ``forecast_quarterly_return_pct`` is an **exogenous assumption
-    supplied by the user via config**. It is *not* derived from the
-    fixture scenario's per-bucket return rates, the CMA, or any
-    scenario perturbation. Two runs with different actual return paths
-    (e.g. ``base`` vs ``public_drawdown``) but the same
-    ``forecast_quarterly_return_pct`` produce identical Owl spending
-    series. See L15 for why this is the Phase 3c minimum and what
-    Phase 4+ would change.
+    The NAV used in the rate check is **realized** end-of-prior-quarter
+    NAV read from the ledger via ``ledger.end_nav_through(quarter - 1)``
+    (Phase 4a; before Phase 4a, Owl used a deterministic forward forecast,
+    which produced directionally wrong responses to inflation and return
+    shocks — see L15 / L18 [resolved 2026-05-01]).
     """
 
     model_config = _STRICT
@@ -183,13 +177,6 @@ class GuardrailConfig(BaseModel):
     lower_band_pct: float = Field(gt=0.0)  # raise trigger
     raise_pct: float = Field(gt=0.0)
     cut_pct: float = Field(gt=0.0, lt=1.0)  # cut < 100% (cannot zero out spending)
-    forecast_quarterly_return_pct: float = Field(
-        default=0.0,
-        description=(
-            "Exogenous user assumption for Owl's forward NAV forecast. "
-            "Not derived from scenarios or CMA. See L15."
-        ),
-    )
 
 
 class SpendingConfig(BaseModel):

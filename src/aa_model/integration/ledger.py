@@ -96,16 +96,22 @@ class QuarterlyLedger:
             }
         )
 
-    def finalize(self) -> pd.DataFrame:
-        if self._finalized:
-            assert self._frame is not None
-            return self._frame
+    def _compute_view(self, max_quarter: pd.Period | None = None) -> pd.DataFrame:
+        """Internal: chained view of currently-appended rows up to ``max_quarter``.
+
+        ``max_quarter=None`` returns every row. Used by :meth:`finalize` (which
+        also flips the lock) and by :meth:`closed_through` (which does not).
+        """
         if not self._rows:
-            self._frame = self._empty_frame()
-            self._finalized = True
-            return self._frame
+            return self._empty_frame()
 
         df = pd.DataFrame(self._rows)
+        if max_quarter is not None:
+            df = df[df["quarter"] <= max_quarter]
+            if df.empty:
+                return self._empty_frame()
+
+        df = df.copy()
         df["_flow_rank"] = df["flow_type"].map(_FLOW_RANK)
         df = df.sort_values(
             by=["quarter", "bucket", "_flow_rank", "source"], kind="mergesort"
@@ -120,9 +126,41 @@ class QuarterlyLedger:
         df["run_id"] = self.run_id
 
         df = df[list(LEDGER_COLUMNS)]
-        self._frame = df
-        self._finalized = True
         return df
+
+    def finalize(self) -> pd.DataFrame:
+        if self._finalized:
+            assert self._frame is not None
+            return self._frame
+        self._frame = self._compute_view()
+        self._finalized = True
+        return self._frame
+
+    def closed_through(self, quarter: pd.Period) -> pd.DataFrame:
+        """Read-only chained view of rows with ``quarter`` ≤ the given quarter.
+
+        Phase 4a primitive (SPEC §Phase 4 design / state-flow contract). Does
+        **not** mutate the ledger and does **not** lock further appends; the
+        ledger continues to accept :meth:`add` calls afterward. The returned
+        frame has the same schema as :meth:`finalize` and is safe to pass to
+        downstream code that consumes ledger views.
+        """
+        return self._compute_view(max_quarter=quarter)
+
+    def end_nav_through(self, quarter: pd.Period) -> pd.Series:
+        """End-of-quarter NAV per bucket at ``quarter`` (or initial NAV if the
+        bucket has no rows at or before ``quarter``).
+
+        Phase 4a helper for path-dependent rules that need realized prior NAV
+        without re-implementing the chain logic.
+        """
+        view = self._compute_view(max_quarter=quarter)
+        nav: dict[str, float] = {b: float(v) for b, v in self._initial_nav.items()}
+        if not view.empty:
+            last = view.groupby("bucket").tail(1).set_index("bucket")["nav_end_usd"]
+            for b in last.index:
+                nav[b] = float(last[b])
+        return pd.Series(nav, dtype=float, name=str(quarter))
 
     def _empty_frame(self) -> pd.DataFrame:
         return pd.DataFrame(
