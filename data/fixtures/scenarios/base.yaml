@@ -1,0 +1,19 @@
+name: base
+description: Deterministic positive-drift baseline
+horizon:
+  start_quarter: "2026Q1"
+  num_quarters: 20
+returns:
+  public_equity:
+    quarterly: 0.018
+  public_bond:
+    quarterly: 0.008
+  cash:
+    quarterly: 0.0075
+nav_initial:
+  public_equity: 65000000
+  public_bond: 20000000
+  cash: 15000000
+  pe_buyout: 0
+external_inflows:
+  default_quarterly_usd: 0.0

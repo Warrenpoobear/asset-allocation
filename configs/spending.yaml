@@ -1,0 +1,8 @@
+rule: flat_real
+annual_spend_usd: 4000000
+inflation_pct: 0.025
+smoothing:
+  window_quarters: 12
+  weight: 0.0
+floor_usd: 0.0
+ceiling_usd: 100000000.0

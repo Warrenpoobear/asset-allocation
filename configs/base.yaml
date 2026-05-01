@@ -1,0 +1,46 @@
+version: "0.1.0"
+seed: 42
+currency: USD
+
+governance:
+  size_usd: 100000000
+  tax:
+    jurisdiction: US
+  license: MIT
+
+solver:
+  preferred: clarabel
+  fallback_chain: [clarabel, scs, osqp]
+
+liquidity:
+  floor_months: 18
+
+pe:
+  sleeve_target_pct: 0.25
+  scope: [buyout]
+
+rebalance:
+  frequency: quarterly
+
+allocation:
+  engine: stub
+  config: configs/public_allocation.yaml
+
+spending:
+  config: configs/spending.yaml
+
+pe_pacing:
+  config: configs/pe_pacing.yaml
+
+scenarios:
+  config: configs/scenarios.yaml
+
+fixtures:
+  scenario: data/fixtures/scenarios/base.yaml
+
+horizon:
+  start_quarter: "2026Q1"
+  num_quarters: 20
+
+output:
+  base_dir: data/processed/runs

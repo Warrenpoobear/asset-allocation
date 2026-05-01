@@ -1,0 +1,2 @@
+# Phase 2 scenario library. Phase 1 uses fixture scenarios under data/fixtures/scenarios/.
+scenarios: []

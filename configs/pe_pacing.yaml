@@ -1,0 +1,13 @@
+ta_defaults:
+  lifetime_years: 12
+  commitment_period_years: 4
+  rate_of_contribution: [0.25, 0.30, 0.25, 0.20]
+  bow: 2.5
+  yield_pct: 0.0
+  growth_pct: 0.13
+
+funds:
+  - name: BuyoutFund_2026Q1
+    commitment_usd: 25000000
+    vintage: "2026Q1"
+    sleeve: pe_buyout

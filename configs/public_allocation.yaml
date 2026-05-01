@@ -1,0 +1,5 @@
+stub_weights:
+  public_equity: 0.50
+  public_bond: 0.20
+  cash: 0.05
+  pe_buyout: 0.25
