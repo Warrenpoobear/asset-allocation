@@ -986,6 +986,171 @@ whether the extras can coexist in one venv without resolution conflicts.
 
 ---
 
+## Phase 4 design (pre-implementation)
+
+This section is **binding before any Phase 4 code lands**. It freezes the
+iteration model, state-flow contract, API migration plan, determinism
+contract, and phase split. No Phase 4 commit may deviate from these rules
+without a documented amendment here first. The motivating failures are
+**L13** (cost-unaware allocator), **L15** (Owl forecast-only NAV), and
+**L18** (Owl misreads inflation shock as headroom — empirically
+demonstrated by the consolidation probe at commit `6b8d0fb`).
+
+### Load-bearing rule
+
+> **No rule may depend on the quarter it is currently writing.**
+> **Rules may observe only the fully closed ledger through the prior
+> quarter.**
+
+This is the single rule everything else flows from. It rules out
+fixed-point solving within a quarter, partial-quarter visibility,
+and any speculative or pre-rebalance state.
+
+### State-flow contract
+
+A rule called for quarter `q` may observe `ledger[quarter <= q-1]`.
+The closed prior quarter includes **all** flow types in canonical
+order: `inflow`, `return`, `pe_call`, `pe_distribution`,
+`pe_nav_mark`, `spend`, `rebalance`, `transaction_cost`. The rule
+**must not** see:
+
+* partial current-quarter return rows;
+* pre-rebalance prior-quarter state;
+* speculative current-quarter state from any other rule.
+
+This keeps the snapshot every rule sees stable and auditable. Two
+rules called for the same quarter `q` see the same ledger view.
+
+### Iteration model
+
+Single forward pass per quarter. No inner loop. No fixed point.
+
+```
+for quarter in horizon:
+    observed = ledger.closed_through(quarter - 1)
+    spend_q  = spending_rule.quarterly_outflow_at(observed, params, quarter)
+    target_q = allocation_engine.target_at(observed, params, quarter)
+    trades_q = implementation_engine.rebalance(current_q, target_q, costs)
+    write all q rows in canonical order
+    close q
+```
+
+The orchestrator never re-opens a closed quarter. Determinism follows
+trivially.
+
+### API migration
+
+Add a per-quarter method to each rule's ABC. Keep the existing
+horizon-level method as a default wrapper that loops the per-quarter
+method. The orchestrator switches to the per-quarter method in
+Phase 4. Rules are **not forked** into "static" and "iterative"
+variants.
+
+```python
+class SpendingRule(ABC):
+    @abstractmethod
+    def quarterly_outflow_at(
+        self,
+        ledger: QuarterlyLedger,   # closed through quarter - 1
+        params: SpendingParams,
+        quarter: pd.Period,
+    ) -> float: ...
+
+    def quarterly_outflows(
+        self, ledger: QuarterlyLedger, params: SpendingParams
+    ) -> pd.Series:
+        # Default wrapper used by Phase 1–3 callers; Phase 4 orchestrator
+        # uses quarterly_outflow_at directly. Default loops the per-quarter
+        # method; rules whose answer doesn't depend on ledger state can
+        # override with a faster vector form if they wish.
+        ...
+```
+
+Per-rule migration:
+
+* `FlatRealRule` — no ledger reads required; the per-quarter method
+  re-derives the inflated quarterly target from config alone.
+* `SmoothingRule` — reads its own prior `spend` row from the closed
+  ledger to recover `spend_{t-1}`; computes
+  `w · target_t + (1-w) · spend_{t-1}`. No more shared state across
+  calls.
+* `OwlRule` — reads `ledger.end_nav_through(q-1)` for the realized
+  prior-quarter total NAV; reads its own prior `spend` row to recover
+  the year's `annual_spend`; applies the year-boundary inflation +
+  guardrail check against **realized** prior NAV (not forecast). This
+  is the structural fix for L15 and L18.
+
+For allocation and implementation adapters, a parallel
+`*.target_at(ledger, params, quarter)` method or equivalent is added
+when Phase 4b lands; Phase 4a keeps allocation / implementation on
+their existing per-call APIs (see split below).
+
+### Ledger capability addition
+
+The current `QuarterlyLedger.finalize()` is one-shot and locks
+appends. Phase 4 needs a read-only intermediate view:
+
+```python
+class QuarterlyLedger:
+    def closed_through(self, quarter: pd.Period) -> ClosedLedgerView: ...
+```
+
+Returns a snapshot of all rows with `quarter <= q-1`, sorted in
+canonical order, with `nav_start` / `nav_end` chained — the same
+shape `finalize()` produces today, but for a partial range. The
+ledger continues to accept appends after `closed_through()` is
+called; only `finalize()` locks. **No shadow state** is introduced —
+the view is computed from the existing append buffer on demand. A
+helper `ledger.end_nav_through(q-1) -> pd.Series` returns end-of-
+quarter NAV per bucket at `q-1`, the most common rule consumption
+pattern.
+
+### Determinism contract — Phase 4 addition
+
+Existing contract holds: same configs + same fixture data → same
+ledger content modulo `run_id`.
+
+Phase 4 addition:
+
+> **Rules may use solvers only if outputs are rounded /
+> canonicalized before ledger emission.** Phase 4a forbids
+> solver-based feedback entirely.
+
+Phase 4a does **not** wire cvxportfolio cost into the optimizer's
+objective (i.e., L13's cost-aware optimizer is explicitly deferred).
+Phase 4b is the earliest a solver may inform a trade decision, and
+even then within the strict closed-prior-quarter model — the
+optimizer sees prior closed state and the current-quarter target,
+nothing forward.
+
+### Phase 4 split
+
+| sub-phase | scope | gates |
+|---|---|---|
+| **4a — Per-quarter observation API** | new `quarterly_outflow_at` ABC method; `closed_through` ledger view; OwlRule reads realized prior NAV; FlatRealRule + SmoothingRule migrate to per-quarter wrappers; orchestrator switches to per-quarter spending. **No allocation / implementation API changes.** | regression: 103 existing tests pass under the new API; new tests pin Owl's correct behavior under `public_drawdown` (must cut, not raise) and `inflation_shock` (must cut). L15 and L18 marked resolved. |
+| **4b — Cost-aware implementation** | optimizer-level cost penalty in `cvxportfolio` adapter; allocator and implementation get per-quarter ABCs (`target_at`, `rebalance_at`); transaction costs remain external (no flow-type changes). Still no fixed-point. | new numerical anchor for cost-aware partial-trade vector; L13 marked resolved. |
+| **4c — Optional fixed-point research** | within-quarter fixed-point solving for joint allocator + spending decisions. **Not production default.** Behind a config flag if it lands at all. | research only; not gated for ship. |
+
+4a is the only sub-phase that addresses an empirically demonstrated
+failure (L18). It must ship first. 4b is dependent on 4a's
+infrastructure. 4c is optional and not blocking.
+
+### What 4a is **not**
+
+Listed explicitly so a future contributor reads them as guardrails:
+
+* Not a fixed-point or iterative solve within a quarter.
+* Not a sidecar / shadow state object outside the ledger.
+* Not a multi-pass orchestrator (one pass per quarter, full stop).
+* Not an API fork between static and iterative spending rules.
+* Not a change to the canonical flow order or `transaction_cost`
+  classification (the §Core Invariants block remains binding).
+* Not a cost-aware optimizer (deferred to 4b).
+* Not a fix for L17 (cross-engine metric comparability is a
+  reporting / interpretation problem, not an architecture problem).
+
+---
+
 ## Change Log
 
 Entries are appended in chronological order. Each entry: date, commit hash,
@@ -1174,6 +1339,48 @@ what changed, why, impact on outputs, backward-compatibility flag.
   updates this file from now on; entries are appended, never rewritten.
 * **Impact on outputs.** None.
 * **Backward-compatible.** Yes.
+
+### 2026-05-01 — Phase 4 design locked (pre-implementation)
+
+* **What.** New §Phase 4 design (pre-implementation) section between
+  §Validation & Testing and §Change Log freezes the architectural
+  rules every Phase 4 commit must respect. Captures the user-supplied
+  design verbatim:
+  - **Load-bearing rule**: no rule may depend on the quarter it is
+    currently writing; rules may observe only the fully closed ledger
+    through the prior quarter.
+  - **Iteration model**: single forward pass per quarter; no
+    fixed-point; no inner loop.
+  - **State-flow contract**: rules see `ledger[quarter <= q-1]` in
+    canonical order with all flow types; no partial-current-quarter
+    state, no pre-rebalance prior-quarter state, no speculative state.
+  - **API migration**: new abstract `quarterly_outflow_at(ledger,
+    params, quarter)` on `SpendingRule`; existing
+    `quarterly_outflows` becomes a default wrapper; rules are not
+    forked into static / iterative variants.
+  - **Ledger addition**: read-only `closed_through(quarter)` view
+    callable on a still-appendable ledger; no shadow state.
+  - **Determinism addition**: solvers may be used only if outputs
+    are rounded / canonicalized before ledger emission; Phase 4a
+    forbids solver-based feedback entirely.
+  - **Phase split**: 4a (per-quarter observation API + Owl
+    realized-NAV) ships first and resolves L15 + L18; 4b (cost-aware
+    implementation) follows and resolves L13; 4c (within-quarter
+    fixed-point) is research-only and never gates ship.
+  - **What 4a is not** — explicit list of guardrails (no fixed-point,
+    no sidecar, no multi-pass orchestrator, no API fork, no canonical
+    order change, no cost-aware optimizer, no fix for L17).
+* **Why.** Phase 3 closed with three coupled limitations (L13, L15,
+  L18) all pointing at the same architectural gap. Phase 4 is no
+  longer "improvement" — it's the correction of empirically
+  demonstrated failures, and the choice between fixed-point and
+  strict-sequential models is the load-bearing decision that
+  determines everything that follows. Locking the design before
+  any code lands prevents the "two paths, both deferred" ambiguity
+  that L18's first version had.
+* **Impact on outputs.** None today. Binds every future Phase 4
+  commit; deviations require an amendment to this section first.
+* **Backward-compatible.** Yes (docs only).
 
 ### 2026-05-01 — L18 tightened: partial-fix path is a trap, not a mitigation
 
