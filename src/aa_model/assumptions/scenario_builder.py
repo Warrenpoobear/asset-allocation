@@ -24,6 +24,23 @@ Correlation shock (also listed in §6) is intentionally omitted: Phase 1
 does not model bucket-level correlation, so a correlation override has
 no place to land. A correlation scenario will be added when the CMA
 gains a covariance matrix.
+
+Model limitation — PE timing scenarios
+======================================
+
+``clustered_calls`` and ``delayed_pe_distributions`` shift the timing of
+PE cash flows but do **not** model the opportunity cost of capital
+parked in PE versus deployed in public markets. PE NAV growth
+(``ta_defaults.growth_pct``) is a deterministic constant that does not
+respond to which side of the portfolio holds capital, and the
+zero-cost rebalancer recycles distributions back into the same target
+weights without slippage. As a result, timing shifts can mechanically
+increase or decrease cumulative return — e.g. ``clustered_calls``
+deploys more capital earlier into a higher-modeled-growth sleeve and
+appears to outperform ``base``. **Do not read this as alpha.** Treat
+PE-timing scenarios as stress on liquidity and pacing, not on returns,
+until the model gains a public-vs-private opportunity-cost link
+(stochastic CMA + per-bucket return paths driven from a shared regime).
 """
 
 from __future__ import annotations
