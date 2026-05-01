@@ -761,6 +761,103 @@ introduce a feedback loop the spending side ignores. Plan to lift L13
 and L15 in a single Phase 4 "iterative per-quarter rule" pass; do not
 ship one without the other.
 
+### L17 — Cross-engine metric comparability is not meaningful
+
+* **Model behavior.** The Phase 3 consolidation probe (60 combinations,
+  see `scripts/consolidation_probe_p3.py`) surfaced that the existing
+  liquidity / drawdown metrics are not directly comparable across
+  allocation engines:
+
+  | engine | min_coverage_months (base) | max_drawdown (public_drawdown) |
+  |---|---:|---:|
+  | stub allocation | 74.1 | -12.78% |
+  | riskfolio allocation | 285.2 | -0.27% |
+
+  Mathematically consistent — riskfolio MinRisk against the placeholder
+  vol vector concentrates ~98% in cash, so the household has 285 months
+  of cash on hand and the -25% public_equity shock barely registers
+  (only 0.1% of the portfolio is in equity). But the headline numbers
+  cannot be read at face value across engines.
+
+* **Real-world interpretation.** `coverage_months` and `max_drawdown`
+  are informative **within** an allocation policy, not **across**.
+  Reading "riskfolio has better drawdown protection" off the table is
+  wrong — the protection comes from giving up almost all return
+  upside (riskfolio final NAV $107.23M vs stub $114.78M on the base
+  scenario). Cross-engine comparison requires either:
+  1. constraint-equalized inputs (same target weights via tight box
+     bounds, leaving the engines only marginally different),
+  2. risk-adjusted measures (Sharpe-style, or a return-per-unit-of-
+     coverage-cost composite), or
+  3. comparing engines against a *fixed* allocation policy and
+     scoring only their *implementation* differences (transaction
+     cost, slippage, drift correction).
+
+  This affects only cross-engine reporting; within an engine, the
+  metrics remain meaningful. Documented here so the comparison
+  report's pivot tables are not misread.
+
+### L18 — Owl misreads inflation shock as "headroom" and raises spending
+
+* **Model behavior.** The Phase 3 consolidation probe surfaced an
+  empirical case where Owl's forecast-only NAV design produces
+  **backward** spending decisions:
+
+  | scenario | flat_real total spend (20q) | owl total spend (20q) |
+  |---|---:|---:|
+  | base | $21.03M | $23.81M |
+  | inflation_shock | $22.55M (+7.2%) | $24.09M (+1.2%) |
+
+  Flat_real responds to `inflation_shock` as expected: higher
+  inflation (6% vs 2.5%) produces ~7% more cumulative spending. Owl's
+  response is smaller in *aggregate* but mechanistically perverse:
+  Owl's guardrail triggers a **raise** at year-3 under inflation_shock
+  (and another at year-4), not a cut.
+
+  Mechanism. Owl uses a fixed `forecast_quarterly_return_pct = 4%/q`
+  (~17%/yr) regardless of scenario. Inflation_shock raises the
+  inflation step on actual spending from 2.5%/yr to 6%/yr but leaves
+  Owl's forecast NAV growth untouched. By year 3:
+
+      rate_year_3   = ($4M · 1.06^3) / ($100M · 1.04^12)
+                    = $4.764M / $160.103M = 2.976%
+      threshold     = 4% · (1 - 0.20) = 3.20%
+      rate < threshold → raise triggers (+10%)
+
+  Owl reads "spending rate falling against forecast NAV" as
+  "portfolio outpacing spending — ratchet up." In reality the
+  portfolio is no different from base (only the spending path
+  changed); the "low rate" is purely a creature of the forecast-vs-
+  spending comparison.
+
+* **Real-world interpretation.** A real Guyton-Klinger guardrail
+  under an inflation shock would trigger **cuts**: higher spending
+  pressure → portfolio at risk → defensive ratchet down. Our Owl
+  produces the opposite. This is the L15 limitation made concrete —
+  the consolidation probe is the empirical case that justifies why
+  L15 binds as a Phase 4 hard prerequisite, not a "nice to have."
+
+  Two mitigation paths, both deferred:
+  1. **Realized-NAV feedback** (per L15) — Owl reads the running
+     ledger's NAV instead of forecasting; under inflation_shock,
+     realized NAV is unchanged from base but realized spending is
+     up, so realized rate rises and the *cut* guardrail fires
+     correctly.
+  2. **Bind forecast to scenario inflation.** Enforce
+     `forecast_quarterly_return_pct = expected_real_return + scenario_inflation`
+     so the forecast moves with the inflation lever. Cheaper than
+     full realized-NAV feedback but only papers over the symptom for
+     this specific failure mode; other scenarios (e.g. a return-side
+     shock) would still misread.
+
+  The probe's tx-cost-by-engine row also confirms a smaller cross-
+  engine subtlety: cvxportfolio under riskfolio allocation costs
+  ~$117k cumulative vs ~$65k under stub allocation, even on the
+  same fixture. Mechanism: riskfolio's drift-prone heavy-cash target
+  forces a ~$83M Q1 turnover (selling equity, buying cash) that the
+  stub's pre-aligned 50/20/5/25 target avoids. Documented as a
+  cross-engine effect, not a separate limitation.
+
 ### L16 — Owl is scale-invariant in initial NAV
 
 * **Model behavior.** Doubling `initial_nav_total` produces an
@@ -1062,6 +1159,50 @@ what changed, why, impact on outputs, backward-compatibility flag.
   updates this file from now on; entries are appended, never rewritten.
 * **Impact on outputs.** None.
 * **Backward-compatible.** Yes.
+
+### 2026-05-01 — Phase 3 consolidation probe + L17 + L18
+
+* **What.**
+  * New research probe: `scripts/consolidation_probe_p3.py` runs the
+    full cross product of `{stub, riskfolio} × {stub, cvxportfolio@5bp}
+    × {flat_real, smoothing, owl} × {base, public_drawdown,
+    delayed_pe_distributions, clustered_calls, inflation_shock}` —
+    60 combinations through the existing orchestrator. **60/60 ok**;
+    no invariant failures; no schema rejections.
+  * Two material limitations surfaced by the probe and now documented:
+    - **L17 — Cross-engine metric comparability** is not meaningful
+      when adapters produce wildly different sleeves. Concrete
+      example: stub vs riskfolio min_coverage on the base scenario
+      is `74 mo` vs `285 mo`; max_drawdown on public_drawdown is
+      `-12.78%` vs `-0.27%`. Both internally consistent; their
+      cross-engine comparison cannot be read at face value because
+      riskfolio's MinRisk concentrates 98% in cash, trading return
+      upside for "coverage" and "drawdown protection" the framework's
+      headline metrics do not penalize.
+    - **L18 — Owl misreads inflation shock as headroom** and raises
+      spending. Empirical case: under inflation_shock, Owl spends
+      $24.09M cum vs $23.81M under base (+1.2%) — but the mechanism
+      is a year-3 *raise* trigger, not a defensive cut. Real GK
+      guardrails would cut. This makes the L15 limitation concrete
+      with a worked example and binds it as a Phase 4 hard
+      prerequisite.
+  * Sub-finding noted in L18 (no separate limitation): cvxportfolio
+    transaction cost is ~$117k cumulative under riskfolio allocation
+    vs ~$65k under stub allocation on the same fixture — the
+    riskfolio target forces a ~$83M Q1 turnover that the stub's
+    pre-aligned target avoids.
+* **Why.** User-directed pause-and-consolidate before P3d. The
+  surface area (60 combos) had outgrown what individual phase tests
+  exercised; surfacing cross-component interactions empirically
+  before adding STAIRS reduces the chance of P3d-era bugs masking as
+  cross-component artifacts.
+* **Impact on outputs.** None directly. The probe is reproducible
+  via `python scripts/consolidation_probe_p3.py --out
+  data/processed/probes/<name>.md` and writes its report into a
+  gitignored directory; it does not run in CI and does not gate any
+  build. L17 / L18 change the *interpretation* of existing reports;
+  they do not change any output numerics.
+* **Backward-compatible.** Yes (script + docs only).
 
 ### 2026-05-01 — P3c post-audit doc clarifications
 
