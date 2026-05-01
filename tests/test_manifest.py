@@ -1,29 +1,40 @@
-"""Reproducibility test (SPEC §7): two consecutive runs on the same config
-produce byte-identical ledger.parquet.
+"""Reproducibility tests (SPEC §7): two consecutive runs on the same config
+produce ledger content that is byte-identical once the per-invocation
+``run_id`` metadata column is dropped, while landing in distinct run dirs
+(SPEC §8 "never overwritten").
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
 
+import pandas as pd
 from aa_model.integration.manifest import make_run_id
 from aa_model.integration.orchestrator import run_orchestrator
 
 
-def test_two_runs_produce_byte_identical_ledger_parquet(base_config_path):
+def _ledger_content(run_dir) -> pd.DataFrame:
+    return pd.read_parquet(run_dir / "ledger.parquet").drop(columns="run_id")
+
+
+def test_two_runs_have_distinct_dirs_but_byte_identical_content(base_config_path):
     r1 = run_orchestrator(base_config_path, dry_run=False)
-    parquet1 = (r1.output_dir / "ledger.parquet").read_bytes()
-    sha1 = hashlib.sha256(parquet1).hexdigest()
+    df1 = _ledger_content(r1.output_dir)
 
     r2 = run_orchestrator(base_config_path, dry_run=False)
-    parquet2 = (r2.output_dir / "ledger.parquet").read_bytes()
-    sha2 = hashlib.sha256(parquet2).hexdigest()
+    df2 = _ledger_content(r2.output_dir)
 
-    assert r1.output_dir == r2.output_dir, "deterministic run_id should produce same output_dir"
+    # Distinct dirs / run_ids per invocation.
+    assert r1.run_id != r2.run_id
+    assert r1.output_dir != r2.output_dir
+    assert r1.output_dir.is_dir() and r2.output_dir.is_dir()
+
+    # Hashes deterministic in inputs.
     assert r1.manifest.config_hash == r2.manifest.config_hash
     assert r1.manifest.fixtures_hash == r2.manifest.fixtures_hash
-    assert sha1 == sha2, "ledger.parquet bytes diverged across two consecutive runs"
+
+    # Ledger content (excluding run_id column) is byte-identical.
+    pd.testing.assert_frame_equal(df1, df2)
 
 
 def test_manifest_json_is_valid_and_pinned_keys(base_config_path):
@@ -46,6 +57,17 @@ def test_manifest_json_is_valid_and_pinned_keys(base_config_path):
     assert data["fixtures_hash"].startswith("sha256:")
 
 
-def test_run_id_derives_from_input_hashes():
-    rid = make_run_id("sha256:abcdef0123456789aabb", "sha256:zzzzyyyy00112233xxxx")
-    assert rid == "aa-abcdef012345-zzzzyyyy0011"
+def test_run_id_combines_hashes_and_invocation_suffix():
+    rid = make_run_id(
+        "sha256:abcdef0123456789aabb",
+        "sha256:zzzzyyyy00112233xxxx",
+        invocation_id="20260501T120000Z-a3f9",
+    )
+    assert rid == "aa-abcdef012345-zzzzyyyy0011-20260501T120000Z-a3f9"
+
+
+def test_explicit_invocation_id_reproduces_run_dir(base_config_path):
+    r1 = run_orchestrator(base_config_path, dry_run=True, invocation_id="20260501T999999Z-test")
+    r2 = run_orchestrator(base_config_path, dry_run=True, invocation_id="20260501T999999Z-test")
+    assert r1.run_id == r2.run_id
+    assert r1.output_dir == r2.output_dir

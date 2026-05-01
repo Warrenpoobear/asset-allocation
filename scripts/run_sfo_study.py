@@ -29,9 +29,14 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="validate configs and print manifest preview without writing outputs",
     )
+    parser.add_argument(
+        "--invocation-id",
+        default=None,
+        help="explicit per-invocation suffix for run_id (default = UTC ts + nonce)",
+    )
     args = parser.parse_args(argv)
 
-    result = run_orchestrator(args.config, dry_run=args.dry_run)
+    result = run_orchestrator(args.config, dry_run=args.dry_run, invocation_id=args.invocation_id)
     print(f"run_id:     {result.run_id}")
     print(f"output_dir: {result.output_dir}")
     print(f"rows:       {len(result.ledger)}")

@@ -2,12 +2,14 @@
 
 Loads + validates the study config, builds a quarterly ledger by emitting
 flows in canonical SPEC §5.1 order, validates every invariant, and writes
-``ledger.parquet`` / ``report.md`` / ``manifest.json`` into a deterministic
+``ledger.parquet`` / ``report.md`` / ``manifest.json`` into a per-invocation
 run directory under ``data/processed/runs/<run_id>/``.
 
-The run id is deterministic in the inputs (``aa-<config_hash[:12]>-
-<fixtures_hash[:12]>``); the same configs always produce the same run dir
-with byte-identical artifacts.
+``run_id`` = ``aa-<cfg_hash[:12]>-<fix_hash[:12]>-<UTC_ts>-<nonce>``. The
+hash segments are deterministic in the inputs; the timestamp + nonce make
+each invocation unique so reruns never overwrite a prior dir (SPEC §8).
+Determinism applies to ledger *content*: two runs of the same config produce
+parquets that are byte-identical once the ``run_id`` column is dropped.
 """
 
 from __future__ import annotations
@@ -51,6 +53,7 @@ def run_orchestrator(
     base_config_path: Path,
     *,
     dry_run: bool = False,
+    invocation_id: str | None = None,
 ) -> RunResult:
     base_config_path = Path(base_config_path).resolve()
     repo_root = resolve_repo_root(base_config_path)
@@ -59,7 +62,7 @@ def run_orchestrator(
 
     config_hash = hash_files(collect_config_paths(base_config_path))
     fixtures_hash = hash_files(collect_fixture_paths(base_config_path))
-    run_id = make_run_id(config_hash, fixtures_hash)
+    run_id = make_run_id(config_hash, fixtures_hash, invocation_id=invocation_id)
 
     started_at = utcnow_iso()
     ledger, expected_externals = _build_ledger(cfg, run_id)

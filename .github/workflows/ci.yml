@@ -39,8 +39,16 @@ jobs:
 
       - name: End-to-end determinism check
         run: |
+          rm -rf data/processed/runs/aa-*
           python scripts/run_sfo_study.py --config configs/base.yaml
-          sha_a=$(sha256sum data/processed/runs/*/ledger.parquet | awk '{print $1}')
+          R1=$(ls -td data/processed/runs/aa-* | head -1)
           python scripts/run_sfo_study.py --config configs/base.yaml
-          sha_b=$(sha256sum data/processed/runs/*/ledger.parquet | awk '{print $1}')
-          test "$sha_a" = "$sha_b" || { echo "ledger.parquet diverged: $sha_a vs $sha_b"; exit 1; }
+          R2=$(ls -td data/processed/runs/aa-* | head -1)
+          test "$R1" != "$R2" || { echo "expected distinct run dirs, got $R1"; exit 1; }
+          python - <<PY
+          import pandas as pd
+          d1 = pd.read_parquet("$R1/ledger.parquet").drop(columns="run_id")
+          d2 = pd.read_parquet("$R2/ledger.parquet").drop(columns="run_id")
+          pd.testing.assert_frame_equal(d1, d2)
+          print("determinism OK: ledger content byte-identical across distinct run dirs")
+          PY

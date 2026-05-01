@@ -60,9 +60,17 @@ def test_dry_run_writes_no_artifacts(base_config_path):
     assert result.manifest.outputs == []
 
 
-def test_run_id_is_deterministic_for_same_config(base_config_path):
+def test_input_hashes_are_deterministic_run_ids_are_unique(base_config_path):
     r1 = run_orchestrator(base_config_path, dry_run=True)
     r2 = run_orchestrator(base_config_path, dry_run=True)
-    assert r1.run_id == r2.run_id
+    # Hashes are deterministic in inputs.
     assert r1.manifest.config_hash == r2.manifest.config_hash
     assert r1.manifest.fixtures_hash == r2.manifest.fixtures_hash
+    # run_id includes a per-invocation suffix, so two consecutive runs differ.
+    assert r1.run_id != r2.run_id
+    # Both run_ids share the same hash prefix though.
+    cfg = r1.manifest.config_hash.split(":", 1)[-1][:12]
+    fix = r1.manifest.fixtures_hash.split(":", 1)[-1][:12]
+    prefix = f"aa-{cfg}-{fix}-"
+    assert r1.run_id.startswith(prefix)
+    assert r2.run_id.startswith(prefix)
