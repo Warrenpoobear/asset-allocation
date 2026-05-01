@@ -1,0 +1,46 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+          pip install -e .
+
+      - name: Lint
+        run: |
+          ruff check src tests scripts
+          ruff format --check src tests scripts
+
+      - name: Test
+        run: |
+          pytest -q --cov=aa_model.integration --cov=aa_model.pe.ta_model --cov-fail-under=80
+
+      - name: End-to-end determinism check
+        run: |
+          python scripts/run_sfo_study.py --config configs/base.yaml
+          sha_a=$(sha256sum data/processed/runs/*/ledger.parquet | awk '{print $1}')
+          python scripts/run_sfo_study.py --config configs/base.yaml
+          sha_b=$(sha256sum data/processed/runs/*/ledger.parquet | awk '{print $1}')
+          test "$sha_a" = "$sha_b" || { echo "ledger.parquet diverged: $sha_a vs $sha_b"; exit 1; }
