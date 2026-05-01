@@ -28,7 +28,7 @@ from aa_model.allocation.constraints import Constraints
 from aa_model.allocation.factory import make_allocator
 from aa_model.assumptions.cma import CMA
 from aa_model.implementation.base import CostModel
-from aa_model.implementation.stub import StubImplementation
+from aa_model.implementation.factory import make_implementation
 from aa_model.integration.ledger import QuarterlyLedger
 from aa_model.integration.manifest import Manifest, make_run_id, utcnow_iso
 from aa_model.integration.report import write_markdown_report
@@ -134,8 +134,8 @@ def _build_ledger(cfg: StudyConfig, run_id: str) -> tuple[QuarterlyLedger, dict[
     alloc = make_allocator(cfg.allocation, engine=cfg.base.allocation.engine)
     alloc.fit(returns=pd.DataFrame(), cma=CMA(), constraints=Constraints())
     target_weights = alloc.weights()
-    impl = StubImplementation()
-    cost_model = CostModel(bps_per_trade=0.0)
+    impl = make_implementation(engine=cfg.base.implementation.engine)
+    cost_model = CostModel(bps_per_trade=cfg.base.implementation.bps_per_trade)
 
     rate_table: dict[str, list[float]] = {}
     for bucket, path in cfg.fixture_scenario.returns.items():
@@ -240,8 +240,6 @@ def _build_ledger(cfg: StudyConfig, run_id: str) -> tuple[QuarterlyLedger, dict[
             )
             running_nav["cash"] = running_nav.get("cash", 0.0) - spend_amt
 
-        expected_externals[q] = ext_inflow_amt - spend_amt
-
         # 7. rebalance to target weights
         total_nav = sum(running_nav.values())
         target_nav = (target_weights * total_nav).reindex(running_nav.keys()).fillna(0.0)
@@ -258,6 +256,22 @@ def _build_ledger(cfg: StudyConfig, run_id: str) -> tuple[QuarterlyLedger, dict[
                     source="rebalance",
                 )
                 running_nav[bucket] = running_nav.get(bucket, 0.0) + t
+
+        # 8. transaction_cost (Phase 3b). Cost is always emitted on cash;
+        # invariants treat it as an external outflow, so the orchestrator's
+        # `expected_externals` for this quarter must include it.
+        cost_usd = float(result.cost_usd)
+        if cost_usd > 0.0:
+            ledger.add(
+                quarter=q,
+                bucket="cash",
+                flow_type="transaction_cost",
+                amount_usd=-cost_usd,
+                source=f"impl:{cfg.base.implementation.engine}",
+            )
+            running_nav["cash"] = running_nav.get("cash", 0.0) - cost_usd
+
+        expected_externals[q] = ext_inflow_amt - spend_amt - cost_usd
 
     return ledger, expected_externals
 

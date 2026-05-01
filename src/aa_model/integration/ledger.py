@@ -10,7 +10,15 @@ from __future__ import annotations
 
 import pandas as pd
 
-# Canonical intra-quarter order (SPEC §5.1).
+# Canonical intra-quarter order (SPEC §5.1, extended in P3b).
+#
+# ``transaction_cost`` is a Phase 3b extension. It models cost paid to the
+# market when executing rebalance trades (brokerage, slippage). Mechanically
+# it behaves like an external outflow on the cash bucket — a negative
+# amount_usd on `cash`, no offset elsewhere — and counts toward the
+# household's net external cash flow that quarter (alongside `inflow` and
+# `spend`). Total NAV conservation has been relaxed to include
+# transaction_cost in the contributing-flows set; see validate().
 FLOW_ORDER: tuple[str, ...] = (
     "inflow",
     "return",
@@ -19,6 +27,7 @@ FLOW_ORDER: tuple[str, ...] = (
     "pe_nav_mark",
     "spend",
     "rebalance",
+    "transaction_cost",
 )
 _FLOW_RANK: dict[str, int] = {f: i for i, f in enumerate(FLOW_ORDER)}
 
@@ -242,7 +251,17 @@ class QuarterlyLedger:
                 actual_delta = end_now - end_prev
                 contrib = df[
                     (df["quarter"] == q)
-                    & (df["flow_type"].isin(["return", "pe_nav_mark", "inflow", "spend"]))
+                    & (
+                        df["flow_type"].isin(
+                            [
+                                "return",
+                                "pe_nav_mark",
+                                "inflow",
+                                "spend",
+                                "transaction_cost",
+                            ]
+                        )
+                    )
                 ]
                 expected_delta = float(contrib["amount_usd"].sum())
                 if abs(actual_delta - expected_delta) > tol:
@@ -252,9 +271,10 @@ class QuarterlyLedger:
                     )
 
         # External cash flow tie-out (optional; orchestrator passes the ground
-        # truth it generated).
+        # truth it generated). transaction_cost is included since it leaves
+        # the household (paid to market-makers / brokers).
         if expected_externals_by_quarter is not None:
-            ext = df[df["flow_type"].isin(["inflow", "spend"])]
+            ext = df[df["flow_type"].isin(["inflow", "spend", "transaction_cost"])]
             sums = ext.groupby("quarter")["amount_usd"].sum().to_dict()
             for q, expected in expected_externals_by_quarter.items():
                 actual = float(sums.get(q, 0.0))

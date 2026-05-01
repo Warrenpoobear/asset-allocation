@@ -8,7 +8,8 @@ from __future__ import annotations
 
 from aa_model.io.schemas import StudyConfig
 
-_KNOWN_ENGINES: frozenset[str] = frozenset({"stub", "riskfolio"})
+_KNOWN_ALLOCATION_ENGINES: frozenset[str] = frozenset({"stub", "riskfolio"})
+_KNOWN_IMPLEMENTATION_ENGINES: frozenset[str] = frozenset({"stub", "cvxportfolio"})
 
 
 def validate_study_config(cfg: StudyConfig) -> None:
@@ -17,10 +18,23 @@ def validate_study_config(cfg: StudyConfig) -> None:
     # Engine must be one of the wired adapters. Schema-level Literal already
     # enforces this; check is repeated here so cross-config validation gives
     # a single, predictable failure mode.
-    if cfg.base.allocation.engine not in _KNOWN_ENGINES:
+    if cfg.base.allocation.engine not in _KNOWN_ALLOCATION_ENGINES:
         raise ValueError(
             f"unsupported allocation.engine: {cfg.base.allocation.engine!r}; "
-            f"known: {sorted(_KNOWN_ENGINES)}"
+            f"known: {sorted(_KNOWN_ALLOCATION_ENGINES)}"
+        )
+    if cfg.base.implementation.engine not in _KNOWN_IMPLEMENTATION_ENGINES:
+        raise ValueError(
+            f"unsupported implementation.engine: {cfg.base.implementation.engine!r}; "
+            f"known: {sorted(_KNOWN_IMPLEMENTATION_ENGINES)}"
+        )
+    # Stub rebalancer must run with bps == 0 — non-zero bps would silently
+    # mean "I asked for costs but the stub ignored them".
+    if cfg.base.implementation.engine == "stub" and cfg.base.implementation.bps_per_trade != 0.0:
+        raise ValueError(
+            "implementation.engine='stub' requires bps_per_trade=0.0 "
+            "(stub is a zero-cost rebalancer); set engine='cvxportfolio' "
+            "to apply costs."
         )
 
     stub_buckets = set(cfg.allocation.stub_weights)

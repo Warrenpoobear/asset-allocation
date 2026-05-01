@@ -78,6 +78,17 @@ class AllocationRefConfig(BaseModel):
     config: str
 
 
+class ImplementationRefConfig(BaseModel):
+    """Rebalancer engine + cost parameters. Phase 3b extension."""
+
+    model_config = _STRICT
+    # Stub is the zero-cost rebalancer (Phase 1 reference); cvxportfolio
+    # (Phase 3b) applies a linear transaction cost via the existing
+    # CostModel channel. New engines extend this Literal.
+    engine: Literal["stub", "cvxportfolio"] = "stub"
+    bps_per_trade: float = Field(ge=0.0, default=0.0)
+
+
 class _SubConfigRef(BaseModel):
     model_config = _STRICT
     config: str
@@ -104,6 +115,7 @@ class BaseConfig(BaseModel):
     pe: PEConfig
     rebalance: RebalanceConfig
     allocation: AllocationRefConfig
+    implementation: ImplementationRefConfig = ImplementationRefConfig()
     spending: _SubConfigRef
     pe_pacing: _SubConfigRef
     scenarios: _SubConfigRef

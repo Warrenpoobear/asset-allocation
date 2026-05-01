@@ -63,7 +63,8 @@ src/aa_model/
 ├─ assumptions/     CMA dataclass, scenario_builder
 ├─ allocation/      AllocationAdapter ABC, StubAllocator, RiskfolioAdapter,
 │                   factory, Constraints
-├─ implementation/  ImplementationAdapter ABC, StubImplementation (zero-cost)
+├─ implementation/  ImplementationAdapter ABC, StubImplementation (zero-cost),
+│                   CvxportfolioImplementation (linear cost), factory
 ├─ spending/        SpendingRule ABC, FlatRealRule, SmoothingRule, liquidity
 ├─ pe/              ta_model (canonical), pacing
 ├─ integration/     QuarterlyLedger, orchestrator, manifest, report,
@@ -95,12 +96,14 @@ The orchestrator is forbidden from completing a run without satisfying every
 invariant below. `QuarterlyLedger.validate()` enforces them and is called
 unconditionally at the end of every run.
 
-### Ledger invariants (SPEC §5.1)
+### Ledger invariants (SPEC §5.1, extended in P3b)
 
 1. **Canonical intra-quarter ordering.** Within each `(quarter, bucket)`,
    rows are sorted by `flow_type` in this order, ties broken by `source`
    ascending:
-   `inflow → return → pe_call → pe_distribution → pe_nav_mark → spend → rebalance`.
+   `inflow → return → pe_call → pe_distribution → pe_nav_mark → spend → rebalance → transaction_cost`.
+   `transaction_cost` is a Phase 3b extension; it lands after rebalance
+   because the cost is a function of the just-executed trades.
 2. **Per-row consistency.** `nav_end_usd == nav_start_usd + amount_usd`
    for every row (within `1e-6`). Returns and `pe_nav_mark` rows express
    their P&L as the dollar `amount_usd`, so this holds uniformly.
@@ -111,9 +114,11 @@ unconditionally at the end of every run.
 4. **Per-bucket per-quarter tie-out.** For each `(run_id, quarter, bucket)`,
    `sum(amount_usd) == nav_end_usd[last_row] - nav_start_usd[first_row]`.
 5. **External cash flow tie-out.** For each `(run_id, quarter)`,
-   `sum(amount_usd over flow_type ∈ {inflow, spend})` equals the household's
-   net external wire that quarter (passed into `validate()` by the
-   orchestrator).
+   `sum(amount_usd over flow_type ∈ {inflow, spend, transaction_cost})`
+   equals the household's net external wire that quarter (passed into
+   `validate()` by the orchestrator). `transaction_cost` is included
+   because the cost leaves the household — paid to brokers /
+   market-makers — and is therefore external cash, not internal flow.
 6. **Rebalance is zero-sum.** For each `(run_id, quarter)`,
    `sum(amount_usd over flow_type == "rebalance") == 0` within `1e-6`.
 7. **PE call / distribution are zero-sum.** Same statement as rebalance,
@@ -126,9 +131,11 @@ unconditionally at the end of every run.
    to catch a swapped-sign or missing-leg bug that happens to net to zero
    across funds.
 9. **Total NAV conservation.** For each `(run_id, quarter)`,
-   `Δ(total_NAV_quarter) == sum(return + pe_nav_mark + inflow + spend amounts)`.
-   Equivalently: total portfolio NAV moves only via market P&L and external
-   cash, never via internal flows.
+   `Δ(total_NAV_quarter) == sum(return + pe_nav_mark + inflow + spend +
+   transaction_cost amounts)`. Equivalently: total portfolio NAV moves
+   only via market P&L and external cash (where `transaction_cost` is
+   classified as external — see invariant 5), never via internal flows
+   like rebalance / pe_call / pe_distribution.
 10. **No NaN** in `amount_usd`, `nav_start_usd`, `nav_end_usd`.
 11. **Single `run_id`** per ledger object.
 
@@ -183,6 +190,43 @@ lazily so the package runs without optional optimizer deps installed.
 `min_weights` and `max_weights` dicts (per-bucket box bounds). `CMA` (in
 `assumptions/cma.py`) carries `expected_returns_annual`, `vol_annual`, and
 `corr` as pandas Series / DataFrame. Both default to empty in Phase 1.
+
+### Implementation (rebalancer)
+
+Behind `ImplementationAdapter` (SPEC §9):
+
+* `StubImplementation` (Phase 1, reference) — zero-cost rebalancer.
+  `trades = target - current`, `cost_usd = 0.0`, no NaN, trades sum to
+  zero by construction.
+* `CvxportfolioImplementation` (Phase 3b, opt-in via
+  `[project.optional-dependencies] cvxportfolio`) — same trades as the
+  stub, plus a linear transaction cost
+  `cost_usd = (bps_per_trade / 1e4) · ∑ |trade|` consistent with the
+  linear term of cvxportfolio's `StocksTransactionCost(a=bps/1e4)`.
+  Quadratic / market-impact / per-share terms are intentionally NOT
+  modeled — Phase 3b minimum (see L14). The adapter has **no path
+  dependence**: trades depend only on the current and target vectors
+  handed in for *this* call, not on any prior call (see L13).
+
+`make_implementation(engine=...)` (in `implementation/factory.py`)
+dispatches by `implementation.engine`. Cvxportfolio imports lazily so
+the package runs without the optional dep.
+
+`CostModel` (`implementation/base.py`) carries `bps_per_trade`. The
+orchestrator builds it from `base.implementation.bps_per_trade` and
+hands it to `rebalance(...)`. Cross-config validation rejects
+`engine=stub` paired with non-zero `bps_per_trade` because the stub
+silently ignores costs and that combination would mean "I asked for
+costs but they weren't applied".
+
+`RebalanceResult` (`implementation/base.py`) is a frozen dataclass
+holding `trades` (per-bucket signed dollar Series) and `cost_usd`.
+
+When `cost_usd > 0`, the orchestrator emits a single
+`transaction_cost` row on the `cash` bucket with `amount_usd =
+-cost_usd` and source `impl:<engine>`. The household's net external
+cash for the quarter then includes this row alongside `inflow` and
+`spend` (see Core Invariants §5).
 
 ### Spending / Liquidity
 
@@ -304,9 +348,14 @@ What the model assumes (Phase 1–3a):
 4. **Identity correlation.** Buckets are statistically independent at the
    model level. The Phase 3a riskfolio adapter's default-CMA fallback
    uses identity correlation explicitly.
-5. **Zero-cost rebalancing.** `StubImplementation` trades exactly the
-   gap between current and target dollar allocations; trades sum to zero
-   per quarter. No transaction costs, no slippage, no execution delay.
+5. **Rebalancing cost model is engine-dependent.**
+   `StubImplementation` is zero-cost: trades exactly the gap between
+   current and target dollar allocations, trades sum to zero per
+   quarter, no transaction costs, no slippage, no execution delay.
+   `CvxportfolioImplementation` (Phase 3b) applies a linear bps cost
+   on traded volume but produces the same trade vector as the stub
+   (no optimization-driven trade reduction, no market impact, no
+   slippage, no execution delay). See L13 / L14.
 6. **No taxes.** No tax-lot accounting, after-tax returns, or charitable
    structures. (Out of v1 scope per SPEC §11.)
 7. **Single currency.** USD only. (Out of v1 scope per SPEC §11.)
@@ -522,6 +571,46 @@ output. Each entry separates **model behavior** (what the code does) from
   `sum(weights) ≈ 1` after `fit()`, so a warning that ever became
   fatal would surface as a test failure rather than a silent
   miscalculation.
+
+### L13 — Cvxportfolio adapter has no path dependence
+
+* **Model behavior.** `CvxportfolioImplementation.rebalance(current,
+  target, costs)` is a pure function. Trades depend only on the inputs
+  to *this* call; no state from prior calls is retained. The full
+  cvxportfolio framework offers multi-period (`MultiPeriodOptimization`)
+  and rolling-window estimators that *would* introduce path dependence
+  — none of those are wired in.
+* **Real-world interpretation.** The adapter does not exploit the
+  cost-aware features that make cvxportfolio worth its dependency
+  weight. We get linear-cost realism but not cost-aware *trading
+  decisions* (e.g. "defer this rebalance because the cost exceeds the
+  expected drift correction"). Determinism is therefore preserved
+  across runs and across engines: switching from `stub` to
+  `cvxportfolio` at zero bps produces byte-identical ledger content
+  (same trades, same `cost_usd = 0`); switching at non-zero bps adds
+  exactly the linear cost rows and nothing else. Multi-period
+  cvxportfolio is a Phase 4 candidate; before turning it on the
+  orchestrator's "one forward pass per quarter, no backfills, no
+  retroactive mutation" rule (Phase 2 close-out) must be reconciled
+  with cvxportfolio's lookahead horizon.
+
+### L14 — Only linear transaction cost is modeled
+
+* **Model behavior.** `cost_usd = (bps_per_trade / 1e4) · ∑ |trade|`.
+  No quadratic term (market impact ∝ |trade|^1.5 or volume-relative),
+  no per-share fixed cost, no asymmetric buy/sell costs, no
+  bucket-specific bps (every trade pays the same rate regardless of
+  asset class).
+* **Real-world interpretation.** Real public-equity / public-bond
+  costs are well-approximated by a single linear bps term at the
+  position sizes our toy fixture exercises (~$2–25M per trade vs.
+  market depth of $100M+). PE rebalances would be wildly mispriced —
+  a $20M PE secondary trade has a discount in the 5–25% range, not
+  bps. The model still treats PE as fully liquid (see L8); fixing
+  L8 and L14 together is the right approach when this part of the
+  system gets serious. The exit-gate test
+  (`test_cvxportfolio_engine_preserves_invariants_under_nonzero_bps`)
+  asserts *invariant preservation*, not *cost realism*.
 
 ---
 
@@ -785,6 +874,93 @@ what changed, why, impact on outputs, backward-compatibility flag.
   updates this file from now on; entries are appended, never rewritten.
 * **Impact on outputs.** None.
 * **Backward-compatible.** Yes.
+
+### 2026-05-01 — Phase 3b / Cvxportfolio implementation adapter
+
+* **What.**
+  * First non-stub `ImplementationAdapter`:
+    `aa_model.implementation.cvxportfolio_adapter.CvxportfolioImplementation`
+    (cvxportfolio 1.5.1, pure-Python, builds on cvxpy 1.8.2 already
+    installed by the riskfolio extra).
+  * **Engine flag.** New `base.implementation` block in
+    `configs/base.yaml`:
+    ```yaml
+    implementation:
+      engine: stub | cvxportfolio
+      bps_per_trade: 0.0  # linear cost coefficient in basis points
+    ```
+    `aa_model.implementation.factory.make_implementation(engine=...)`
+    dispatches by engine.
+  * **Optional dependency behavior.** Lazy `import cvxportfolio` in
+    the adapter constructor. Tests gated on
+    `pytest.importorskip("cvxportfolio")`. Optional-deps group:
+    `[project.optional-dependencies] cvxportfolio = ["cvxportfolio==1.5.1"]`.
+  * **Cost model.** Linear, all-bucket:
+    `cost_usd = (bps_per_trade / 1e4) · ∑ |trade|`. Matches the linear
+    term of `cvxportfolio.costs.StocksTransactionCost(a=bps/1e4)`.
+    Quadratic / market-impact / per-share terms intentionally NOT
+    modeled — see L14.
+  * **Path dependence.** None. Adapter is pure: trades depend only on
+    the current and target vectors handed in for *this* call. See
+    L13.
+  * **Ledger extension.** New canonical flow_type
+    `transaction_cost`, ordered after `rebalance` in
+    `FLOW_ORDER`. Treated as an external outflow on the `cash`
+    bucket (no offset elsewhere). Two §Core Invariants updated:
+    - **External cash flow tie-out** now sums
+      `inflow + spend + transaction_cost`.
+    - **Total NAV conservation** now includes `transaction_cost` in
+      the contributing-flows set.
+    The orchestrator emits a single `transaction_cost` row per
+    quarter (only when `cost_usd > 0`) on `cash` with source
+    `impl:<engine>`.
+  * **Cross-config validation.** Rejects `engine=stub` paired with
+    `bps_per_trade != 0.0` (would silently drop the requested cost).
+  * **Numerical anchor test.** Hand-worked closed-form check at 5 bps
+    on a fixed (current, target) pair: 4M total trade volume × 5/10000
+    = $2,000.00 cost; per-bucket trades match `[0, -2M, +2M, 0]`
+    within 1e-4 USD. This is the L11 ε convention applied to the
+    cvxportfolio adapter — first non-stub adapter shipping with a
+    binding numerical anchor.
+  * **Stub parity at zero cost.** With `bps_per_trade == 0` the
+    cvxportfolio adapter produces trades and cost bit-equal to the
+    stub. Tested directly.
+  * **End-to-end.** New orchestrator-level test
+    (`test_cvxportfolio_engine_preserves_invariants_under_nonzero_bps`)
+    runs the full base scenario with `engine=cvxportfolio` + 5 bps
+    and asserts (a) `transaction_cost` rows appear, (b) every cost
+    row lands on cash with non-positive amount, (c) at most one cost
+    row per quarter, (d) cumulative cost is positive but small
+    (`< $1M` against a $100M portfolio over 20 quarters).
+* **Why.** Phase 3b spec brief — first non-stub `ImplementationAdapter`
+  behind the ABC. Discipline guardrails: pure adapter, no shared state,
+  no caches, no ledger access; lazy backend import; structural parity
+  + numerical anchor at non-zero bps; explicit no-path-dependence
+  statement; ledger-invariant preservation under transaction costs.
+* **Impact on outputs.**
+  * Default config (`implementation.engine: stub`,
+    `bps_per_trade: 0.0`) is unaffected. Existing 71 tests still pass.
+  * Setting `implementation.engine: cvxportfolio,
+    bps_per_trade: 5.0` against the base fixture produces:
+    * 272-row ledger (vs 252 for stub) — extra 20 `transaction_cost`
+      rows, one per quarter.
+    * Cumulative transaction cost: $62,556.50 over 20 quarters
+      (~0.063% of $100M starting NAV).
+    * Final NAV: $114,705,602 (vs stub's $114,778,335) — exactly
+      the $72,733 difference is end-of-horizon-NAV scaling of the
+      $62,557 paid out (small compounding offset).
+    * Q1 carries the largest cost ($23,510) because the rebalance
+      from initial NAV to target weights is largest in Q1; Q2+ costs
+      drop to ~$2,500/quarter (small drift correction).
+  * 9 new tests in `tests/test_cvxportfolio_adapter.py` (structural
+    parity + numerical anchor + determinism + scaling + edge-case
+    bucket alignment + diagnostics) plus 1 new orchestrator-level
+    test, all gated on `pytest.importorskip("cvxportfolio")`.
+* **Backward-compatible.** Yes for the public API. Schema gained an
+  `implementation:` block with `stub` defaults so existing configs
+  without that block load unchanged. Existing tests pass under the
+  bumped `FLOW_ORDER` (the canonical ordering test was updated to
+  include `transaction_cost`).
 
 ### 2026-05-01 — L11 ε defined as `1e-4`
 

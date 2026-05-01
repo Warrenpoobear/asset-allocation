@@ -22,6 +22,10 @@ dependencies = [
 # Heavy install (~80 transitive deps including matplotlib, numba, statsmodels,
 # vectorbt, ipywidgets) — keep out of the core install set.
 riskfolio = ["riskfolio-lib==7.2.1"]
+# Phase 3b opt-in: cvxportfolio adapter (implementation.engine = "cvxportfolio").
+# Pure-Python on top of cvxpy; ~5 small extra deps. Light install if
+# cvxpy is already present (riskfolio already pulls it in).
+cvxportfolio = ["cvxportfolio==1.5.1"]
 
 [project.scripts]
 aa-model = "aa_model.cli.main:main"

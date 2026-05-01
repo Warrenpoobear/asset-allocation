@@ -51,3 +51,22 @@ def with_drawdown_config(repo_root):
         yield dst
     finally:
         dst.unlink(missing_ok=True)
+
+
+@pytest.fixture
+def with_cvxportfolio_config(repo_root):
+    """Yield a base.yaml inside repo configs/ with implementation.engine =
+    cvxportfolio and bps_per_trade > 0. Same constraint as drawdown: the
+    loader requires the config to live inside the repo.
+    """
+    import yaml
+
+    configs = repo_root / "configs"
+    cfg = yaml.safe_load((configs / "base.yaml").read_text(encoding="utf-8"))
+    cfg["implementation"] = {"engine": "cvxportfolio", "bps_per_trade": 5.0}
+    dst = configs / "_test_cvxportfolio.yaml"
+    dst.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+    try:
+        yield dst
+    finally:
+        dst.unlink(missing_ok=True)

@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 
 import pandas as pd
+import pytest
 from aa_model.integration.orchestrator import run_orchestrator
 
 _ALLOWED_FLOW_TYPES = {
@@ -96,6 +97,31 @@ def test_pe_call_and_distribution_have_matching_cash_offsets(base_config_path):
         assert (
             diff < 1e-9
         ).all(), f"{ftype}: per-source cash offset asymmetry, max |diff|={diff.max()}"
+
+
+def test_cvxportfolio_engine_preserves_invariants_under_nonzero_bps(
+    with_cvxportfolio_config,
+):
+    """Phase 3b end-to-end: switching to cvxportfolio + 5 bps must not break
+    any ledger invariant. Total NAV conservation now includes
+    transaction_cost in the contributing-flows set; arrival here means
+    QuarterlyLedger.validate() still passed.
+    """
+    pytest.importorskip("cvxportfolio")
+    result = run_orchestrator(with_cvxportfolio_config, dry_run=False)
+    df = result.ledger
+    # Sanity checks beyond the invariant battery already run by the orchestrator:
+    assert "transaction_cost" in df["flow_type"].unique()
+    tc = df[df["flow_type"] == "transaction_cost"]
+    # Every transaction_cost row should land on cash, be non-positive,
+    # and appear at most once per quarter.
+    assert (tc["bucket"] == "cash").all()
+    assert (tc["amount_usd"] <= 0.0).all()
+    assert tc.groupby("quarter").size().max() == 1
+    # And totals: cumulative cost should be positive but small (we used 5 bps
+    # on rebalance volume against a $100M portfolio with mostly small drift).
+    cum_cost = float(-tc["amount_usd"].sum())
+    assert 0.0 < cum_cost < 1_000_000.0
 
 
 def test_input_hashes_are_deterministic_run_ids_are_unique(base_config_path):

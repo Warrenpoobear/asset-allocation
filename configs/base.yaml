@@ -26,6 +26,10 @@ allocation:
   engine: stub
   config: configs/public_allocation.yaml
 
+implementation:
+  engine: stub
+  bps_per_trade: 0.0
+
 spending:
   config: configs/spending.yaml
 

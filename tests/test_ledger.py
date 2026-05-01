@@ -27,6 +27,7 @@ def test_canonical_intra_quarter_ordering():
     q = _q("2026Q1")
     L = QuarterlyLedger("r", initial_nav={"a": 0.0}, start_quarter=q)
     # Insert in reverse order; finalize should re-sort.
+    L.add(quarter=q, bucket="a", flow_type="transaction_cost", amount_usd=0.0, source="cvx")
     L.add(quarter=q, bucket="a", flow_type="rebalance", amount_usd=0.0, source="z")
     L.add(quarter=q, bucket="a", flow_type="spend", amount_usd=0.0, source="s")
     L.add(quarter=q, bucket="a", flow_type="pe_nav_mark", amount_usd=0.0, source="p")
@@ -74,6 +75,40 @@ def test_external_cash_flow_tie_out():
     L.validate(expected_externals_by_quarter={q: 20.0})  # pass case
     with pytest.raises(AssertionError, match="external cash flow tie-out"):
         L.validate(expected_externals_by_quarter={q: 99.0})
+
+
+def test_transaction_cost_counts_toward_external_tie_out():
+    """Phase 3b extension: transaction_cost behaves like a household-external
+    outflow. It must be summed with inflow / spend in the external tie-out
+    check, and it must be included in the total NAV conservation contribution
+    set so the ledger still balances when costs are non-zero.
+    """
+    q = _q("2026Q1")
+    L = QuarterlyLedger("r", initial_nav={"cash": 100.0, "bond": 50.0}, start_quarter=q)
+    L.add(quarter=q, bucket="cash", flow_type="return", amount_usd=2.0, source="cma")
+    L.add(quarter=q, bucket="bond", flow_type="return", amount_usd=1.0, source="cma")
+    L.add(quarter=q, bucket="cash", flow_type="rebalance", amount_usd=-5.0, source="r")
+    L.add(quarter=q, bucket="bond", flow_type="rebalance", amount_usd=+5.0, source="r")
+    L.add(quarter=q, bucket="cash", flow_type="transaction_cost", amount_usd=-0.5, source="cvx")
+    # Net external this quarter = inflow(0) + spend(0) + transaction_cost(-0.5).
+    L.validate(expected_externals_by_quarter={q: -0.5})
+    # Total NAV: (51 + 96.5) - (50 + 100) = -2.5;
+    # contributing flows: return(+1+2) + transaction_cost(-0.5) = 2.5 — passes
+    # the conservation check. Mismatch on the external truth raises.
+    with pytest.raises(AssertionError, match="external cash flow tie-out"):
+        L.validate(expected_externals_by_quarter={q: 0.0})
+
+
+def test_transaction_cost_only_on_cash_keeps_buckets_consistent():
+    """transaction_cost is NOT zero-sum across buckets — it's an external
+    outflow on cash with no offset elsewhere. Other invariants still hold.
+    """
+    q = _q("2026Q1")
+    L = QuarterlyLedger("r", initial_nav={"cash": 100.0}, start_quarter=q)
+    L.add(quarter=q, bucket="cash", flow_type="transaction_cost", amount_usd=-3.0, source="cvx")
+    L.validate(expected_externals_by_quarter={q: -3.0})
+    df = L.finalize()
+    assert df.iloc[0]["nav_end_usd"] == 97.0
 
 
 def test_total_nav_conservation():
