@@ -119,7 +119,8 @@ canonical source.
 
 **Status: not yet built.** The Cashflow Modeling workbook (§5) is
 the canonical reference; ingestion is the next concrete deliverable
-after L19 closes.
+after L19 closes (Phase 12 base-side has shipped; Phase 12.5 flow-
+side is in flight at time of last scope-doc refresh).
 
 ### 3.4 PE pacing layer
 * Commitment, call, distribution, and NAV projection per fund.
@@ -185,8 +186,9 @@ layers, not the whole project.
 | 3.7 Allocation / policy | shipped (Phases 1–11) |
 
 The **Limitations table** in `MODEL_DOCUMENTATION.md` reflects this
-honestly: L19 (spending base realism) is the immediate next-priority
-modeling fix, and is the entry point into the unbuilt layers above.
+honestly: L19 (spending base realism) is the active modeling fix
+(base-side closed in Phase 12, flow-side in Phase 12.5), and is the
+entry point into the unbuilt layers above.
 
 ---
 
@@ -286,8 +288,11 @@ implications is authoritative for ordering. Under this scope statement:
 
 1. **L19 — Spending base realism.** Owl currently measures rate
    against total NAV; for this household total NAV materially
-   overstates spendable resources. L19 is the next modeling fix and
-   the bridge into the unbuilt layers below.
+   overstates spendable resources. L19 is the active modeling fix
+   (base-side configurable denominator shipped in Phase 12;
+   flow-side `distribution_inflow` ledger flow + `distributable_
+   income` base in Phase 12.5) and the bridge into the unbuilt
+   layers below.
 2. **Cash-flow ingestion + entity schema (§3.1, §3.3).** Validated
    pydantic schemas for the entity chart and the per-entity cash-
    flow forecast; loaders for the Cashflow Modeling workbook;
