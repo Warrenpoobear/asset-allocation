@@ -4,6 +4,7 @@ Phase 1: minimal — run id, hashes, scenario, horizon, initial / final NAV,
 cumulative return, end-of-horizon allocation, total NAV per quarter.
 Phase 4b adds an advisory cost-aware allocator calibration section.
 Phase 5 adds a Capital Market Assumptions section.
+Phase 6 adds a Correlation shock (scenario) section when active.
 HTML rendering is a Phase 4 deliverable.
 """
 
@@ -20,6 +21,7 @@ from aa_model.io.schemas import StudyConfig
 
 if TYPE_CHECKING:
     from aa_model.assumptions.cma import CMA
+    from aa_model.assumptions.correlation_shock import CorrelationShockDiagnostics
 
 
 def write_markdown_report(
@@ -32,6 +34,7 @@ def write_markdown_report(
     fixtures_hash: str,
     allocator_diagnostics: dict | None = None,
     cma: CMA | None = None,
+    shock_diagnostics: CorrelationShockDiagnostics | None = None,
 ) -> None:
     end_nav = ledger.end_nav_by_quarter()
     initial_total = sum(ledger.initial_nav.values())
@@ -130,6 +133,32 @@ def write_markdown_report(
             for tag, n in counts.items():
                 lines.append(f"- {tag}: {int(n)}")
             lines.append("")
+
+    # Correlation shock (Phase 6 / L6). Emitted only when a scenario
+    # supplied a shock; otherwise the section is omitted entirely.
+    if shock_diagnostics is not None:
+        lines.append("## Correlation shock (scenario)")
+        lines.append("")
+        lines.append(f"- type: `{shock_diagnostics.shock_type}`")
+        if shock_diagnostics.shock_type == "scale":
+            lines.append(f"- magnitude: {float(shock_diagnostics.magnitude):g}")
+            lines.append(
+                f"- entries clipped to [-1, 1]: "
+                f"{int(shock_diagnostics.clipped_pairs or 0)}"
+            )
+        else:  # override
+            lines.append(
+                f"- pairwise replacements: {int(shock_diagnostics.override_pairs or 0)}"
+            )
+        lines.append(
+            f"- max |Δρ| vs baseline: {float(shock_diagnostics.max_abs_delta):.4f}"
+        )
+        lines.append("- PSD: pass")
+        lines.append(
+            "- note: CMA baseline preserved; this is a perturbation layer "
+            "applied to a copy."
+        )
+        lines.append("")
 
     # Cost-aware allocator calibration (engine=cvxportfolio only). Emit
     # the rule-of-thumb suggested λ_norm vs the configured value, plus a

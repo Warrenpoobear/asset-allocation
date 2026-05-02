@@ -48,11 +48,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from aa_model.io.schemas import (
+    CorrelationShock,
     FixtureScenarioConfig,
     PEPacingConfig,
     ReturnOverride,
     ReturnPath,
     SpendingConfig,
+    _OverrideCorrelationShock,
 )
 
 
@@ -63,6 +65,11 @@ class Scenario:
     Any field set to ``None`` keeps the base value. ``name`` is the
     scenario's identifier in the comparison report and the suffix on
     the per-scenario invocation id.
+
+    Phase 6 adds ``correlation_shock`` — a perturbation layer over the
+    CMA correlation matrix only. The shock is applied once at run
+    start, before the per-quarter loop, against a **copy** of the
+    loaded baseline CMA. See MODEL_DOCUMENTATION.md §Phase 6 design.
     """
 
     name: str
@@ -70,6 +77,7 @@ class Scenario:
     fixture_scenario: FixtureScenarioConfig | None = None
     pe_pacing: PEPacingConfig | None = None
     spending: SpendingConfig | None = None
+    correlation_shock: CorrelationShock | None = None
 
 
 def _override_returns(
@@ -158,6 +166,30 @@ def make_scenarios(
             name="inflation_shock",
             description="Spending inflation steps from 2.5% to 6.0% per year.",
             spending=sp_shock,
+        )
+    )
+
+    # 6. Crisis correlation (Phase 6 / L6). Override-based shock pushing
+    # public_equity ↔ pe_buyout co-movement to 0.95 and tightening
+    # public_bond ↔ public_equity to 0.30 — a stylized crisis where
+    # diversification across risky sleeves collapses. ``override`` is the
+    # right vehicle here (not ``scale``): the shipped baseline CMA has
+    # identity off-diagonals, so a multiplicative shock would be a no-op.
+    crisis_shock = _OverrideCorrelationShock(
+        type="override",
+        matrix={
+            "public_equity": {"pe_buyout": 0.95, "public_bond": 0.30},
+        },
+    )
+    scenarios.append(
+        Scenario(
+            name="crisis_correlation",
+            description=(
+                "Crisis correlation: public_equity ↔ pe_buyout = 0.95, "
+                "public_bond ↔ public_equity = 0.30. CMA baseline preserved; "
+                "perturbation layer only."
+            ),
+            correlation_shock=crisis_shock,
         )
     )
 

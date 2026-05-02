@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import math
 import re
-from typing import Literal
+from typing import Annotated, Literal
 
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -299,6 +299,104 @@ class CMAConfig(BaseModel):
                 f"{-_PSD_TOLERANCE:.0e})"
             )
         return self
+
+
+# ---- correlation shock (Phase 6 / L6) --------------------------------------
+
+
+class _ScaleCorrelationShock(BaseModel):
+    """Sign-preserving multiplicative shock to every off-diagonal entry of
+    the CMA correlation matrix. See MODEL_DOCUMENTATION.md §Phase 6 design.
+
+    Diagonal entries are preserved. Results are clipped to ``[-1, 1]``;
+    the clip count is surfaced in the report so saturation is visible.
+    """
+
+    model_config = _STRICT
+    type: Literal["scale"]
+    magnitude: float
+
+    @field_validator("magnitude")
+    @classmethod
+    def _magnitude_positive_finite(cls, v: float) -> float:
+        x = float(v)
+        if not math.isfinite(x):
+            raise ValueError(f"correlation_shock.scale.magnitude = {v!r} is not finite")
+        if x <= 0.0:
+            raise ValueError(
+                f"correlation_shock.scale.magnitude = {x} must be > 0; "
+                "negative magnitudes flip every off-diagonal sign and are almost "
+                "certainly a user error"
+            )
+        return x
+
+
+class _OverrideCorrelationShock(BaseModel):
+    """Explicit pairwise replacement of correlation entries.
+
+    Partial: unspecified entries pass through from the baseline CMA.
+    Auto-mirrored: specifying ``matrix["a"]["b"] = 0.95`` also sets
+    ``matrix["b"]["a"]``. If both directions are supplied and **disagree**,
+    apply-time validation fails loudly. See MODEL_DOCUMENTATION.md §Phase 6.
+
+    Bucket-set alignment with the CMA is checked at apply time (the
+    schema does not have a CMA reference).
+    """
+
+    model_config = _STRICT
+    type: Literal["override"]
+    matrix: dict[str, dict[str, float]]
+
+    @field_validator("matrix")
+    @classmethod
+    def _matrix_well_formed(
+        cls, v: dict[str, dict[str, float]]
+    ) -> dict[str, dict[str, float]]:
+        if not v:
+            raise ValueError("correlation_shock.override.matrix must be non-empty")
+        for i, row in v.items():
+            for j, x in row.items():
+                xf = float(x)
+                if not math.isfinite(xf):
+                    raise ValueError(
+                        f"correlation_shock.override.matrix[{i!r}][{j!r}] = "
+                        f"{x!r} is not finite"
+                    )
+                if abs(xf) > _CORR_BOUND + _NUMERIC_TOLERANCE:
+                    raise ValueError(
+                        f"correlation_shock.override.matrix[{i!r}][{j!r}] = "
+                        f"{xf} out of [-1, 1]"
+                    )
+                if i == j and abs(xf - 1.0) > _NUMERIC_TOLERANCE:
+                    raise ValueError(
+                        f"correlation_shock.override.matrix[{i!r}][{i!r}] = "
+                        f"{xf}; diagonal must be 1.0 within {_NUMERIC_TOLERANCE} "
+                        "if specified"
+                    )
+        # Asymmetric supply: if both [i][j] and [j][i] are given, they must agree.
+        keys = sorted(v.keys())
+        for i, ki in enumerate(keys):
+            row_i = v[ki]
+            for kj in keys[i + 1 :]:
+                if kj not in row_i:
+                    continue
+                if kj not in v or ki not in v[kj]:
+                    continue
+                a = float(row_i[kj])
+                b = float(v[kj][ki])
+                if abs(a - b) > _NUMERIC_TOLERANCE:
+                    raise ValueError(
+                        f"correlation_shock.override.matrix[{ki!r}][{kj!r}] = {a} "
+                        f"!= matrix[{kj!r}][{ki!r}] = {b} — supply only one "
+                        "direction or two equal values; values are auto-mirrored"
+                    )
+        return v
+
+
+CorrelationShock = Annotated[
+    _ScaleCorrelationShock | _OverrideCorrelationShock,
+    Field(discriminator="type"),
+]
 
 
 # ---- spending --------------------------------------------------------------

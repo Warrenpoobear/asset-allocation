@@ -124,6 +124,57 @@ def test_cvxportfolio_engine_preserves_invariants_under_nonzero_bps(
     assert 0.0 < cum_cost < 1_000_000.0
 
 
+def test_crisis_correlation_scenario_end_to_end(base_config_path):
+    """Phase 6 / L6: the crisis_correlation scenario shocks the CMA's
+    correlation matrix via override; orchestrator must apply the shock
+    before fitting the allocator and the report must surface a
+    'Correlation shock (scenario)' section with the right diagnostics.
+    Ledger invariants must still hold — the shock is upstream of any
+    flow logic.
+    """
+    from aa_model.assumptions.scenario_builder import make_scenarios
+    from aa_model.io.loaders import load_study_config
+
+    cfg = load_study_config(base_config_path)
+    sc = next(
+        s
+        for s in make_scenarios(cfg.fixture_scenario, cfg.pe_pacing, cfg.spending)
+        if s.name == "crisis_correlation"
+    )
+    result = run_orchestrator(base_config_path, scenario=sc, dry_run=False)
+    text = (result.output_dir / "report.md").read_text(encoding="utf-8")
+
+    assert "## Correlation shock (scenario)" in text
+    assert "type: `override`" in text
+    assert "pairwise replacements: 2" in text
+    assert "max |Δρ| vs baseline" in text
+    assert "PSD: pass" in text
+    assert "CMA baseline preserved" in text
+
+
+def test_correlation_shock_changes_run_id_hash(base_config_path):
+    """The shock must propagate into config_hash so two runs differing only
+    in the shock produce distinct run_ids. This is the architectural
+    contract that makes scenario substitution into ``cfg.cma`` (Phase 6
+    refactor) the right design.
+    """
+    from aa_model.assumptions.scenario_builder import make_scenarios
+    from aa_model.io.loaders import load_study_config
+
+    cfg = load_study_config(base_config_path)
+    scenarios = make_scenarios(cfg.fixture_scenario, cfg.pe_pacing, cfg.spending)
+    base_sc = next(s for s in scenarios if s.name == "base")
+    crisis_sc = next(s for s in scenarios if s.name == "crisis_correlation")
+
+    rr_base = run_orchestrator(base_config_path, scenario=base_sc, dry_run=True)
+    rr_crisis = run_orchestrator(base_config_path, scenario=crisis_sc, dry_run=True)
+    assert rr_base.manifest.config_hash != rr_crisis.manifest.config_hash, (
+        "shock did not propagate into config_hash; "
+        f"base={rr_base.manifest.config_hash}, "
+        f"crisis={rr_crisis.manifest.config_hash}"
+    )
+
+
 def test_report_contains_capital_market_assumptions_section(base_config_path):
     """Phase 5: report.md gains a 'Capital market assumptions' section
     rendered from the loaded CMA. Skipped when CMA is absent (test

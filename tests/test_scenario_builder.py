@@ -19,7 +19,10 @@ def scenarios(base_cfg):
     return make_scenarios(base_cfg.fixture_scenario, base_cfg.pe_pacing, base_cfg.spending)
 
 
-def test_five_canonical_scenarios(scenarios):
+def test_canonical_scenarios(scenarios):
+    """Phase 1 shipped 5 canonical scenarios; Phase 6 added the 6th
+    (``crisis_correlation``) when the CMA correlation matrix went live.
+    """
     names = [s.name for s in scenarios]
     assert names == [
         "base",
@@ -27,6 +30,7 @@ def test_five_canonical_scenarios(scenarios):
         "delayed_pe_distributions",
         "clustered_calls",
         "inflation_shock",
+        "crisis_correlation",
     ]
 
 

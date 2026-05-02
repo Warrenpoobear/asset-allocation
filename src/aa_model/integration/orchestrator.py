@@ -28,6 +28,10 @@ from aa_model.allocation.base import AllocationParams
 from aa_model.allocation.constraints import Constraints
 from aa_model.allocation.factory import make_allocator
 from aa_model.assumptions.cma import CMA
+from aa_model.assumptions.correlation_shock import (
+    CorrelationShockDiagnostics,
+    apply_correlation_shock,
+)
 from aa_model.implementation.base import CostModel
 from aa_model.implementation.factory import make_implementation
 from aa_model.integration.ledger import QuarterlyLedger
@@ -66,15 +70,21 @@ def run_orchestrator(
     base_config_path = Path(base_config_path).resolve()
     repo_root = resolve_repo_root(base_config_path)
     cfg = load_study_config(base_config_path)
+    shock_diagnostics: CorrelationShockDiagnostics | None = None
     if scenario is not None:
-        cfg = _apply_scenario(cfg, scenario)
+        cfg, shock_diagnostics = _apply_scenario(cfg, scenario)
     validate_study_config(cfg)
 
     config_hash, fixtures_hash = hash_study_config(cfg)
     run_id = make_run_id(config_hash, fixtures_hash, invocation_id=invocation_id)
 
     started_at = utcnow_iso()
-    ledger, expected_externals, allocator_diagnostics, cma = _build_ledger(cfg, run_id)
+    (
+        ledger,
+        expected_externals,
+        allocator_diagnostics,
+        cma,
+    ) = _build_ledger(cfg, run_id)
     ledger.validate(expected_externals_by_quarter=expected_externals)
 
     out_dir = repo_root / cfg.base.output.base_dir / run_id
@@ -95,6 +105,7 @@ def run_orchestrator(
             fixtures_hash=fixtures_hash,
             allocator_diagnostics=allocator_diagnostics,
             cma=cma,
+            shock_diagnostics=shock_diagnostics,
         )
         outputs.append("report.md")
         outputs.append("manifest.json")
@@ -317,11 +328,20 @@ def _write_ledger_parquet(df: pd.DataFrame, path: Path) -> None:
     )
 
 
-def _apply_scenario(cfg: StudyConfig, scenario: Scenario) -> StudyConfig:
+def _apply_scenario(
+    cfg: StudyConfig, scenario: Scenario
+) -> tuple[StudyConfig, CorrelationShockDiagnostics | None]:
     """Apply scenario overrides to a resolved StudyConfig.
 
     Pure data substitution — no orchestrator branching on scenario identity.
     Any field on ``scenario`` set to None is left at the base value.
+
+    For ``correlation_shock``, the override is materialised into a new
+    ``CMAConfig`` (Phase 6 / L6) so ``cfg.cma`` carries the shocked
+    correlations and ``hash_study_config`` reflects the shock in
+    ``config_hash`` automatically. The shock's diagnostics object is
+    returned alongside the new ``cfg`` so the report can render them
+    without re-applying the shock logic.
     """
     updates: dict = {}
     if scenario.fixture_scenario is not None:
@@ -330,4 +350,12 @@ def _apply_scenario(cfg: StudyConfig, scenario: Scenario) -> StudyConfig:
         updates["pe_pacing"] = scenario.pe_pacing
     if scenario.spending is not None:
         updates["spending"] = scenario.spending
-    return cfg.model_copy(update=updates) if updates else cfg
+    shock_diagnostics: CorrelationShockDiagnostics | None = None
+    if scenario.correlation_shock is not None:
+        new_cma_cfg, shock_diagnostics = apply_correlation_shock(
+            cfg.cma, scenario.correlation_shock
+        )
+        updates["cma"] = new_cma_cfg
+    if updates:
+        return cfg.model_copy(update=updates), shock_diagnostics
+    return cfg, shock_diagnostics

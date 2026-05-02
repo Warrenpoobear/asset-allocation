@@ -551,7 +551,30 @@ output. Each entry separates **model behavior** (what the code does) from
   silently. A `flow_id` field is the right Phase 3+ fix; deferred per
   SPEC §10.7 (no speculative abstractions).
 
-### L6 — `correlation_shock` scenario is omitted
+### L6 — `correlation_shock` scenario is omitted — [RESOLVED 2026-05-02, Phase 6]
+
+> **Status: RESOLVED in Phase 6.** A scenario-driven correlation shock
+> layer was added once Phase 5 landed an explicit CMA correlation
+> matrix to perturb. The shock is a discriminated-union schema in
+> `io/schemas.py` (`scale` for sign-preserving multiplicative
+> amplification with clip-to-`[-1, 1]`; `override` for explicit
+> pairwise replacement with auto-mirror) carried as an optional field
+> on the `Scenario` dataclass. Application materialises the shocked
+> correlations into a new `CMAConfig` substituted into `cfg.cma` —
+> so the shock automatically propagates into `config_hash` and the
+> run_id, and `_build_ledger` consumes the shocked CMA without any
+> shock-aware branching. Validation re-uses the CMA loader's
+> per-cell + symmetry + diagonal + PSD checks (fixed `-1e-9`
+> tolerance) — failure raises with the smallest eigenvalue in the
+> message; no PSD repair, no nearest-matrix projection, no blending.
+> A new `crisis_correlation` scenario (the 6th canonical) ships an
+> override pushing public_equity ↔ pe_buyout to 0.95 and
+> public_bond ↔ public_equity to 0.30. The report gains a
+> "Correlation shock (scenario)" section with type, pairwise
+> replacement count (or scale magnitude + clipped count),
+> max |Δρ| vs baseline, and PSD status.
+
+The original Phase 1 text follows for audit-trail purposes.
 
 * **Model behavior.** `make_scenarios` returns five scenarios, not the
   six suggested in SPEC §6. There is no covariance matrix to perturb.
@@ -3275,3 +3298,87 @@ what changed, why, impact on outputs, backward-compatibility flag.
   regime dynamics later.
 * **Impact on outputs.** None — design only.
 * **Backward-compatible.** Yes (design only).
+
+### 2026-05-02 — Phase 6 implementation: correlation_shock (resolves L6)
+
+* **What.** Implements the §Phase 6 design locked one commit prior.
+  Six surfaces touched, one cohesive commit:
+  1. **Schema** (`io/schemas.py`). New ``CorrelationShock``
+     discriminated-union: ``_ScaleCorrelationShock`` (positive,
+     finite ``magnitude``) and ``_OverrideCorrelationShock``
+     (per-cell ``[-1, 1]`` bounds, diagonal == 1, asymmetric supply
+     fails loudly with both values in the error). Pydantic
+     ``Field(discriminator="type")`` routes by variant.
+  2. **Apply function** (`assumptions/correlation_shock.py`).
+     ``apply_correlation_shock(cma_cfg, shock) -> (CMAConfig,
+     diagnostics)``. Operates on ``CMAConfig`` (dict form), not on
+     the ``CMA`` dataclass — that lets the shocked correlations
+     substitute into ``cfg.cma`` and flow through the existing
+     ``hash_study_config`` + ``_build_ledger`` pipeline with no
+     extra wiring. The shocked dict is fed back through
+     ``CMAConfig.model_validate`` so per-cell + PSD validation
+     re-runs on the post-shock state. Variant semantics:
+     - ``scale``: ``ρ_new = clip(ρ × magnitude, -1, 1)`` for every
+       off-diagonal. Diagonal preserved. Sign-preserving — positive
+       and negative correlations both grow in absolute magnitude.
+       Clipped pairs counted and surfaced.
+     - ``override``: partial merge over the baseline, auto-mirrored
+       (one-direction supply is fine; symmetric supply with equal
+       values is fine; asymmetric supply raises at schema time).
+       Unknown bucket names raise at apply time with bucket name
+       in the message. Diagonal entries (if specified) must be 1.0.
+     - Diagnostics dataclass (``CorrelationShockDiagnostics``) carries
+       ``shock_type``, ``magnitude`` / ``override_pairs`` /
+       ``clipped_pairs``, ``max_abs_delta`` for the report.
+  3. **Scenario carrier** (`assumptions/scenario_builder.py`).
+     ``Scenario`` gains optional ``correlation_shock``. New 6th
+     canonical scenario ``crisis_correlation`` ships an override
+     pushing ``public_equity ↔ pe_buyout`` to 0.95 and
+     ``public_bond ↔ public_equity`` to 0.30 (``scale`` would be a
+     no-op against the shipped identity-correlation CMA).
+  4. **Orchestrator** (`integration/orchestrator.py`).
+     ``_apply_scenario`` materialises the shock into a new
+     ``CMAConfig`` substituted into ``cfg.cma`` and returns the
+     diagnostics alongside the new ``cfg``. ``cfg.cma`` is in
+     ``config_hash``, so the shock automatically produces a distinct
+     ``run_id`` — no special handling required. ``_build_ledger``
+     unchanged.
+  5. **Report** (`integration/report.py`). New optional
+     "Correlation shock (scenario)" section showing type,
+     pairwise replacements (override) or magnitude + clipped count
+     (scale), max |Δρ|, PSD status, baseline-preserved note.
+  6. **Validation re-use.** No new PSD code path: the shocked
+     ``CMAConfig`` round-trips through the existing CMA validator,
+     which raises with ``smallest eigenvalue = X.XXXe-N`` if the
+     shock breaks PSD.
+* **Why.** Phase 5 landed an explicit CMA correlation matrix; L6
+  was the natural unblock. Doing correlation shocks before STAIRS
+  gives a static stress-test layer first, validates it, then layers
+  regime dynamics (Phase 7+).
+* **Tests added (18).**
+  - ``tests/test_correlation_shock.py`` (16): discriminated-union
+    routing (3); scale schema (positive + finite magnitude, 2);
+    override schema (out-of-range value, diagonal != 1, asymmetric
+    supply, symmetric-equal-supply allowed, 4); apply semantics
+    (sign-preserving amplification, clip-and-count, partial-merge
+    + auto-mirror, unknown-bucket failure, baseline immutability,
+    PSD failure on override, PSD failure on scale-clip, 7).
+  - ``tests/test_orchestrator.py`` (2): ``crisis_correlation``
+    end-to-end (report section + diagnostics); shock changes
+    ``config_hash`` (architectural contract that scenario
+    substitution into ``cfg.cma`` is the right design).
+  - ``tests/test_scenario_builder.py`` updated:
+    ``test_canonical_scenarios`` now expects 6 scenarios (was 5);
+    existing hash-uniqueness test passes with the new scenario
+    because the shock propagates into ``config_hash``.
+* **Impact on outputs.** Zero numerical change on shipped configs.
+  Existing 5 canonical scenarios run identically (none of them
+  set ``correlation_shock``). The new ``crisis_correlation``
+  scenario produces a distinct run_id and a distinct
+  end-of-horizon allocation under the riskfolio engine (the only
+  CMA-consuming engine). ``ledger.parquet`` and ``manifest.json``
+  byte-stable on the unshocked scenarios. **160 tests pass** (was
+  142).
+* **Backward-compatible.** Yes. ``Scenario`` gains a new optional
+  field with ``None`` default; existing scenarios pass through
+  unchanged. The new schema and the new scenario are additive.
