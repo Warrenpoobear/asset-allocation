@@ -172,6 +172,12 @@ class CvxportfolioAllocator(AllocationAdapter):
         """Deterministic post-processing: clip negatives, round, fix sum-to-1
         exactly by correction on the largest-weight bucket. The ledger sees
         only the canonicalized values regardless of solver bit-noise.
+
+        A tail assertion pins ``sum(w) ≈ 1.0`` within ``1e-12`` as a
+        defense-in-depth guardrail — protects the downstream
+        ``target_nav = w * V_total`` step (which depends on sum-to-one for
+        total-NAV conservation) against silent drift if the
+        canonicalization logic ever changes.
         """
         arr = weights.reindex(idx).fillna(0.0).astype(float).to_numpy()
         arr = np.clip(arr, 0.0, None)
@@ -180,4 +186,9 @@ class CvxportfolioAllocator(AllocationAdapter):
         if s > 0.0 and abs(s - 1.0) > 0.0:
             j = int(np.argmax(arr))
             arr[j] = arr[j] + (1.0 - s)
+        final_sum = float(arr.sum())
+        assert abs(final_sum - 1.0) < 1e-12, (
+            f"cost-aware allocator canonicalization produced sum={final_sum!r}, "
+            f"expected 1.0 within 1e-12"
+        )
         return pd.Series(arr, index=idx, dtype=float, name="weight")
