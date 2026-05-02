@@ -95,8 +95,10 @@ queue a separate phase to address it.
   rate-based Guyton-Klinger semantics, which is scale-invariant
   by design. **L16 closure does NOT address spending-base
   realism — Owl still measures rate against total NAV.**
-* **L19 (PARTIALLY RESOLVED, Phase 12 + Phase 12.5)** — spending-
-  rule denominator **infrastructure** is complete on both sides.
+* **L19 (PARTIALLY RESOLVED, Phase 12 + Phase 12.5 + Phase 13)** —
+  spending-rule denominator **infrastructure** complete on both
+  sides AND a **config-driven producer** for distribution_inflow
+  rows is shipped.
   Phase 12 (commit `92c327d`) shipped the base-side: four
   configurable modes (`total_nav` default, `liquid_nav`,
   `liquid_plus_income_producing_nav`, `custom_policy`). Phase 12.5
@@ -604,7 +606,7 @@ doesn't have to skim eighteen entries to know what's open.
 | L16 | Owl is scale-invariant in initial NAV | **RESOLVED** | Phase 11 (optional absolute-dollar clamps in `GuardrailConfig`) |
 | L17 | Cross-engine metric comparability is not meaningful | **ACCEPTED LIMITATION** | Phase 10 consolidation — interpretation problem, not architecture |
 | L18 | Owl misreads inflation shock as "headroom" and raises spending | **RESOLVED** | Phase 4a |
-| L19 | Spending base realism for illiquid SFO balance sheets | **PARTIALLY RESOLVED** | Phase 12 + 12.5 — spending-rule denominator infrastructure complete; production distributable-income realism producer-dependent (Phase 13/14) |
+| L19 | Spending base realism for illiquid SFO balance sheets | **PARTIALLY RESOLVED** | Phase 12 + 12.5 + 13 — spending-rule denominator infrastructure + config-driven producer complete; workbook-driven realism producer-dependent (Phase 14) |
 
 #### Status definitions
 
@@ -1371,12 +1373,27 @@ The original Phase 3c text follows for audit-trail purposes:
   absolute dollar guardrails; switching to an absolute-dollar guardrail
   is a real-world refinement but doesn't qualify as Phase 3c minimum.
 
-### L19 — Spending base realism for illiquid SFO balance sheets — [PARTIALLY RESOLVED 2026-05-02, Phase 12 + Phase 12.5]
+### L19 — Spending base realism for illiquid SFO balance sheets — [PARTIALLY RESOLVED 2026-05-02, Phase 12 + Phase 12.5 + Phase 13]
 
-> **Status: PARTIALLY RESOLVED in Phase 12 + Phase 12.5.**
-> Spending-rule denominator infrastructure is complete on both
-> sides; production distributable-income realism remains
-> producer-dependent.
+> **Status: PARTIALLY RESOLVED in Phase 12 + Phase 12.5 + Phase 13.**
+> Spending-rule denominator infrastructure complete (both sides);
+> config-driven producer for distribution_inflow rows shipped.
+> Workbook-driven realism (``Cashflow Modeling v7.xlsx`` + entity
+> schema) remains dependent on Phase 14.
+>
+> **Producer-side (Phase 13):** new ``DistributionProducer`` ABC
+> with ``ConfigDrivenProducer`` adapter; ``DistributionProducerConfig``
+> Pydantic schema with per-domain hard validators (URL-safe ids,
+> domain × recurrence sanity). The orchestrator wires the producer
+> into the per-quarter loop; emissions land as ``distribution_inflow``
+> rows on cash. Restricted entries filter at emit time. Recurrence
+> and confidence captured as producer-side diagnostics; ledger row
+> schema unchanged. New ``## Distribution producer (advisory)``
+> report section composes with the Phase 12.5 spending-base
+> advisory. **Phase 13 does NOT model inter-entity cash-movement
+> mechanics** (declarations, approvals, withholding, distribution
+> waterfalls, trust-payout calendars, banking settlements) —
+> Phase 13 reviewer tightening 1; that work sits at Phase 14+.
 >
 > **Base-side (Phase 12, commit ``92c327d``):** Owl's withdrawal-
 > rate denominator is configurable via ``GuardrailConfig.spending_base``
@@ -8582,3 +8599,82 @@ future spending- and liquidity-related modeling work.
   denominator infrastructure complete; production distributable-
   income realism producer-dependent (Phase 13/14). L19 flips to
   RESOLVED only after producers exist.
+
+### 2026-05-02 — Phase 13 design-lock + reviewer tightenings
+
+* **What.** Two docs-only commits (``89ab712``, ``345f964``) adding
+  the ``## Phase 13 design (pre-implementation) — RE / OpCo
+  distribution_inflow producer`` block to ``MODEL_DOCUMENTATION.md``,
+  then applying two reviewer tightenings.
+* **Tightenings.** (1) Cash-movement / source-of-cash boundary —
+  Phase 13 emits income recognition into modeled cash, treats
+  configured entries as already approved/distributable/payable,
+  does NOT model inter-entity transfer mechanics (Phase 14+ work).
+  (2) Duplicate (source, quarter) pairs allowed when producer_id
+  is unique; producer_id is the row-level audit key.
+* **Tests.** Docs-only; zero code change.
+* **Backward-compatible.** Yes — design only.
+
+### 2026-05-02 — Phase 13 implementation: RE / OpCo distribution_inflow producer (config-driven)
+
+* **What.** Implements the design-lock above as one cohesive
+  commit. New module ``src/aa_model/producers/distribution.py``
+  with ``DistributionProducer`` ABC, ``ConfigDrivenProducer``
+  concrete, ``DistributionEmission`` /
+  ``DistributionProducerDiagnosticsDelta`` /
+  ``DistributionProducerDiagnostics`` dataclasses, and
+  ``make_distribution_producer`` factory (engine="config" only;
+  Phase 14 will add "workbook"). New schemas
+  ``DistributionEntryConfig`` and ``DistributionProducerConfig`` in
+  ``io/schemas.py`` with hard validators (URL-safe ids,
+  amount > 0 + finite, quarter parses, domain × recurrence sanity,
+  producer_id globally unique). ``StudyConfig.distribution_producer``
+  optional with default None. Orchestrator wires the producer once
+  per quarter inside the existing per-quarter loop; emissions land
+  as ``distribution_inflow`` rows on cash via the existing
+  ledger.add() path. Producer-diagnostics dataclass accumulates
+  across the run; surfaced in the orchestrator return tuple and
+  threaded into ``write_markdown_report``. Report gains a new
+  ``## Distribution producer (advisory)`` section with by-domain /
+  by-recurrence / by-confidence / top-3 / excluded-restricted
+  breakdowns + warning bands (one-time share ≥ 30%, top-3
+  concentration ≥ 80%, forecast/scenario share ≥ 20%, restricted
+  entries surfaced). Composes with Phase 12.5's
+  ``## Owl spending base (advisory)`` rather than replacing it.
+* **Why.** Closes the consumer-producer loop opened by Phase 12.5.
+  Owl can now run end-to-end on
+  ``spending_base="distributable_income"`` with hand-authored or
+  config-driven family-office income data. Production-grade
+  workbook-driven realism remains Phase 14.
+* **Reviewer tightenings.**
+  - (1) Cash-movement boundary: producer treats entries as
+    already-approved / distributable / payable; does NOT model
+    inter-entity transfer mechanics. The standing-principle audit
+    sits at the producer; cash mechanics are Phase 14+.
+  - (2) Duplicate (source, quarter) allowed: uniqueness is on
+    ``producer_id`` only. Multiple entries may share a source
+    string in the same quarter (recurring rent + one-time refi
+    proceeds from the same building); the by-source rollup sums
+    additively, ``producer_id`` distinguishes the audit trail.
+* **Files touched.** ``src/aa_model/producers/__init__.py`` (NEW);
+  ``src/aa_model/producers/distribution.py`` (NEW);
+  ``src/aa_model/io/schemas.py`` (DistributionEntryConfig,
+  DistributionProducerConfig, StudyConfig field);
+  ``src/aa_model/integration/orchestrator.py`` (producer wiring,
+  per-quarter emit, return tuple extension);
+  ``src/aa_model/integration/report.py`` (new advisory section);
+  ``MODEL_DOCUMENTATION.md`` (L19 status + this entry).
+  ``tests/test_phase13_distribution_producer.py`` (NEW — 14 tests).
+* **Tests.** 14 new Phase 13 tests + 251 existing tests still
+  green = **265 passed**. Default-off byte-stability verified
+  (cfg.distribution_producer = None ⇒ Phase 12.5 trajectories
+  byte-identical).
+* **Backward-compatible.** Yes. Existing fixtures, configs, and
+  trajectories byte-identical to Phase 12.5.
+* **L19.** Stays at ``[PARTIALLY RESOLVED 2026-05-02, Phase 12 +
+  Phase 12.5 + Phase 13]``. Wording: spending-rule denominator
+  infrastructure complete; config-driven producer shipped;
+  workbook-driven realism remains dependent on Phase 14
+  (Cashflow Modeling v7.xlsx + entity schema). L19 flips to
+  RESOLVED only after Phase 14 producers exist and the SFO can
+  run end-to-end on real household income data.

@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from aa_model.allocation.liquidity_overlay import LiquidityOverlayDiagnostics
     from aa_model.assumptions.cma import CMA
     from aa_model.assumptions.correlation_shock import CorrelationShockDiagnostics
+    from aa_model.producers.distribution import DistributionProducerDiagnostics
 
 
 # Phase 10 / L14 advisory thresholds. **Diagnostic heuristics, not
@@ -47,6 +48,7 @@ def write_markdown_report(
     shock_diagnostics: CorrelationShockDiagnostics | None = None,
     overlay_history: list[tuple[str, LiquidityOverlayDiagnostics]] | None = None,
     spending_diagnostics: dict | None = None,
+    distribution_producer_diagnostics: DistributionProducerDiagnostics | None = None,
 ) -> None:
     end_nav = ledger.end_nav_by_quarter()
     initial_total = sum(ledger.initial_nav.values())
@@ -966,6 +968,91 @@ def write_markdown_report(
             )
             lines.append("  - ``custom_policy`` (per-bucket inclusion weights)")
             lines.append("")
+
+    # Distribution producer (Phase 13 / L19 producer-side). Composes
+    # with the Phase 12.5 ## Owl spending base section above — readers
+    # get both consumer-side (Owl base view) and producer-side
+    # (emissions, restricted, concentration) snapshots. Gated on the
+    # producer being configured AND emitting at least one row.
+    if (
+        distribution_producer_diagnostics is not None
+        and distribution_producer_diagnostics.total_emitted_usd > 0.0
+    ):
+        d = distribution_producer_diagnostics
+        total = d.total_emitted_usd
+        lines.append("## Distribution producer (advisory)")
+        lines.append("")
+        lines.append("- emissions by domain (run total):")
+        for dom in sorted(d.emitted_by_domain_usd.keys()):
+            usd = float(d.emitted_by_domain_usd[dom])
+            lines.append(f"  - {dom}: ${usd:,.0f}")
+        if d.emitted_by_recurrence_usd:
+            lines.append("- emissions by recurrence type:")
+            for rt in ("recurring", "one_time"):
+                if rt in d.emitted_by_recurrence_usd:
+                    usd = float(d.emitted_by_recurrence_usd[rt])
+                    pct = (usd / total * 100.0) if total > 0 else 0.0
+                    lines.append(f"  - {rt}: ${usd:,.0f}   ({pct:.0f}%)")
+        if d.emitted_by_confidence_usd:
+            lines.append("- emissions by confidence:")
+            for conf in ("contractual", "forecast", "scenario"):
+                if conf in d.emitted_by_confidence_usd:
+                    usd = float(d.emitted_by_confidence_usd[conf])
+                    pct = (usd / total * 100.0) if total > 0 else 0.0
+                    lines.append(f"  - {conf}: ${usd:,.0f}   ({pct:.0f}%)")
+        top3 = d.top_n_sources(3)
+        if top3:
+            lines.append("- top-3 sources (by USD, run total):")
+            for src, usd in top3:
+                lines.append(f"  - {src}: ${usd:,.0f}")
+        if d.excluded_restricted_count > 0:
+            lines.append("- excluded (restricted=True):")
+            lines.append(f"  - count: {d.excluded_restricted_count} entries")
+            lines.append(f"  - dollars: ${d.excluded_restricted_usd:,.0f}")
+        # Regime + warning bands.
+        lines.append("- regime:")
+        lines.append("  - producer-feed active (config-driven)")
+        if d.one_time_share_pct >= 0.30:
+            lines.append(
+                f"  - **WARNING — one-time share is "
+                f"{d.one_time_share_pct * 100:.0f}% of trailing emissions; "
+                "rate-band reads against a base materially dependent on "
+                "non-recurring flows.**"
+            )
+        if d.top_3_source_concentration_pct >= 0.80:
+            lines.append(
+                f"  - **WARNING — top-3 sources account for "
+                f"{d.top_3_source_concentration_pct * 100:.0f}% of "
+                "emissions; concentration risk in the trailing-income "
+                "base.**"
+            )
+        if d.forecast_scenario_share_pct >= 0.20:
+            lines.append(
+                f"  - **WARNING — "
+                f"{d.forecast_scenario_share_pct * 100:.0f}% of emissions "
+                "are forecast or scenario confidence; review producer "
+                "config before relying on the trailing-income rate.**"
+            )
+        if d.excluded_restricted_count > 0:
+            lines.append(
+                f"  - INFO: {d.excluded_restricted_count} restricted "
+                "entries surfaced for transparency (excluded from ledger)."
+            )
+        lines.append("")
+        lines.append(
+            "_Phase 13 implements the config-driven producer for "
+            "``distribution_inflow`` rows. Workbook-driven ingestion of "
+            "real SFO income data lands in Phase 14. The producer trusts "
+            "upstream classification (legal / tax / entity-governance "
+            "distributability, recurring vs one-time, restricted flag) "
+            "per Phase 12.5 reviewer tightening 1; it does not determine "
+            "distributability of its own. Phase 13 also does NOT model "
+            "inter-entity cash-movement mechanics — configured entries "
+            "are treated as already approved, distributable, and payable "
+            "to the modeled liquidity pool (Phase 13 reviewer tightening "
+            "1)._"
+        )
+        lines.append("")
 
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines), encoding="utf-8")

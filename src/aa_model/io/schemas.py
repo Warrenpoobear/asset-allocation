@@ -943,6 +943,116 @@ class FixtureScenarioConfig(BaseModel):
     external_inflows: ExternalInflows
 
 
+# ---- distribution producer (Phase 13 / L19 producer-side) ------------------
+
+
+class DistributionEntryConfig(BaseModel):
+    """One classified distribution event consumed by Phase 13's
+    ConfigDrivenProducer.
+
+    Each entry represents a SINGLE declared distribution event for a
+    SINGLE quarter — already classified upstream as
+    family-office-distributable. The producer trusts the upstream
+    classification (Phase 12.5 reviewer tightening 1; Phase 13
+    reviewer tightening 1): legal / tax / entity-governance
+    distributability AND inter-entity cash-movement mechanics sit
+    upstream, not in this schema.
+    """
+
+    model_config = _STRICT
+    producer_id: str = Field(min_length=1)
+    domain: Literal[
+        "real_estate",
+        "opco",
+        "land",
+        "development",
+        "portfolio",
+        "entity",
+    ]
+    entity_id: str = Field(min_length=1)
+    asset_id: str | None = None
+    quarter: str = Field(pattern=r"^\d{4}Q[1-4]$")
+    amount_usd: float = Field(gt=0.0)
+    recurrence_type: Literal["recurring", "one_time"]
+    confidence: Literal["contractual", "forecast", "scenario"]
+    restricted: bool = False
+    source_reference: str | None = None
+
+    @field_validator("amount_usd")
+    @classmethod
+    def _amount_finite(cls, v: float) -> float:
+        # Phase 13: pydantic gt=0 admits inf; reject explicitly.
+        if not math.isfinite(v):
+            raise ValueError(f"amount_usd must be finite; got {v!r}")
+        return v
+
+    @field_validator("producer_id", "entity_id")
+    @classmethod
+    def _no_colons(cls, v: str) -> str:
+        # Colons are reserved for the source-convention separator
+        # (distribution:<domain>:<id>). A producer_id or entity_id
+        # containing a colon would silently corrupt the parseable
+        # source string.
+        if ":" in v:
+            raise ValueError(
+                f"colons are reserved for the source convention separator; "
+                f"got {v!r}"
+            )
+        return v
+
+    @field_validator("asset_id")
+    @classmethod
+    def _no_colons_asset(cls, v: str | None) -> str | None:
+        if v is not None and ":" in v:
+            raise ValueError(
+                f"asset_id may not contain colons (reserved for source "
+                f"convention separator); got {v!r}"
+            )
+        return v
+
+    @model_validator(mode="after")
+    def _domain_recurrence_sanity(self) -> DistributionEntryConfig:
+        # Phase 13 hard sanity rule: development and land have no
+        # recurring yield by definition. After stabilization, an asset
+        # graduates from "development" to "real_estate" in the spec.
+        # Recurring agricultural / extraction land leases are a Phase
+        # 13.x concern — not in scope for this initial schema.
+        if (
+            self.domain in ("development", "land")
+            and self.recurrence_type == "recurring"
+        ):
+            raise ValueError(
+                f"domain={self.domain!r} cannot have "
+                f"recurrence_type='recurring'; only one_time monetization "
+                f"events qualify (sale, refi, capital event)"
+            )
+        return self
+
+
+class DistributionProducerConfig(BaseModel):
+    """Phase 13 producer-side spec. Consumed by ConfigDrivenProducer."""
+
+    model_config = _STRICT
+    entries: list[DistributionEntryConfig]
+
+    @model_validator(mode="after")
+    def _producer_id_globally_unique(self) -> DistributionProducerConfig:
+        # Phase 13 reviewer tightening 2: uniqueness is on producer_id
+        # ONLY; multiple entries may share (domain, entity_id,
+        # asset_id, quarter) and emit the same source string in the
+        # same quarter (e.g., recurring rent + one-time refi proceeds
+        # from the same building). producer_id is the row-level audit
+        # key on the producer-diagnostics side.
+        ids = [e.producer_id for e in self.entries]
+        if len(ids) != len(set(ids)):
+            dups = sorted({i for i in ids if ids.count(i) > 1})
+            raise ValueError(
+                f"DistributionProducerConfig: producer_id must be globally "
+                f"unique; duplicates: {dups}"
+            )
+        return self
+
+
 # ---- top-level resolved view ------------------------------------------------
 
 
@@ -957,6 +1067,10 @@ class StudyConfig(BaseModel):
     pe_pacing: PEPacingConfig
     scenarios: ScenariosConfig
     fixture_scenario: FixtureScenarioConfig
+    # Phase 13 / L19 producer-side: optional. Default None means
+    # "no producer wired" — orchestrator emits zero distribution_inflow
+    # rows; Phase 12.5 trajectories byte-identical.
+    distribution_producer: DistributionProducerConfig | None = None
 
     @model_validator(mode="after")
     def _phase12_spending_base_cross_config(self) -> StudyConfig:

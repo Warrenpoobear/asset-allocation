@@ -49,6 +49,11 @@ from aa_model.io.loaders import (
 from aa_model.io.schemas import StudyConfig
 from aa_model.io.validation import validate_study_config
 from aa_model.pe.factory import make_pe_adapter
+from aa_model.producers.distribution import (
+    DistributionProducer,
+    DistributionProducerDiagnostics,
+    make_distribution_producer,
+)
 from aa_model.spending.base import SpendingParams
 from aa_model.spending.rules import make_rule
 
@@ -90,6 +95,7 @@ def run_orchestrator(
         cma,
         overlay_history,
         spending_diagnostics,
+        distribution_producer_diagnostics,
     ) = _build_ledger(cfg, run_id)
     ledger.validate(expected_externals_by_quarter=expected_externals)
 
@@ -114,6 +120,7 @@ def run_orchestrator(
             shock_diagnostics=shock_diagnostics,
             overlay_history=overlay_history,
             spending_diagnostics=spending_diagnostics,
+            distribution_producer_diagnostics=distribution_producer_diagnostics,
         )
         outputs.append("report.md")
         outputs.append("manifest.json")
@@ -148,6 +155,7 @@ def _build_ledger(
     CMA,
     list[tuple[str, LiquidityOverlayDiagnostics]],
     dict | None,
+    DistributionProducerDiagnostics | None,
 ]:
     start_q = pd.Period(cfg.base.horizon.start_quarter, freq="Q-DEC")
     n_q = cfg.base.horizon.num_quarters
@@ -225,6 +233,17 @@ def _build_ledger(
     overlay_diagnostics_history: list[tuple[str, LiquidityOverlayDiagnostics]] = []
     ext_inflow_amt = float(cfg.fixture_scenario.external_inflows.default_quarterly_usd)
 
+    # Phase 13 / L19 producer-side: construct the distribution producer
+    # if configured, else None. Default-off behavior preserves Phase
+    # 12.5 trajectories byte-identical (zero distribution_inflow rows).
+    producer: DistributionProducer | None = None
+    distribution_producer_diagnostics: DistributionProducerDiagnostics | None = None
+    if cfg.distribution_producer is not None:
+        producer = make_distribution_producer(
+            cfg.distribution_producer, engine="config"
+        )
+        distribution_producer_diagnostics = DistributionProducerDiagnostics()
+
     for i in range(n_q):
         q = start_q + i
 
@@ -245,6 +264,26 @@ def _build_ledger(
                 source="fixture",
             )
             running_nav["cash"] = running_nav.get("cash", 0.0) + ext_inflow_amt
+
+        # 1.5 Phase 13 / L19: distribution_inflow emissions. Producer
+        # is pure (config + q → emissions); FLOW_ORDER places
+        # distribution_inflow between inflow and return so canonical
+        # sort handles intra-quarter ordering regardless of when add()
+        # is called inside this iteration. Restricted entries filter
+        # at emit time; never reach the ledger.
+        if producer is not None:
+            emissions, dprod_delta = producer.emit_for_quarter(q)
+            for em in emissions:
+                ledger.add(
+                    quarter=q,
+                    bucket="cash",
+                    flow_type="distribution_inflow",
+                    amount_usd=em.amount_usd,
+                    source=em.source,
+                )
+                running_nav["cash"] = running_nav.get("cash", 0.0) + em.amount_usd
+            assert distribution_producer_diagnostics is not None
+            distribution_producer_diagnostics.merge(dprod_delta)
 
         # 2. returns on liquid (non-PE) buckets, marked on running nav
         for bucket, rates in rate_table.items():
@@ -409,6 +448,7 @@ def _build_ledger(
         cma,
         overlay_diagnostics_history,
         spending_diagnostics,
+        distribution_producer_diagnostics,
     )
 
 
