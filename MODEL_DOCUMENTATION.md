@@ -187,6 +187,21 @@ ABC contract requires, no global state, no out-of-channel reads.
   ledger argument is the only legitimate channel for ledger reads;
   the orchestrator passes it with `initial_nav` set and (today) no
   flows yet recorded.
+* **`PEAdapter`** (Phase 7+) — pure function of
+  `(PEPacingConfig, horizon_start, num_quarters, CMA, public_equity_path)`
+  → PE projection frame conforming to `PROJECTION_COLUMNS`. **No
+  ledger access** (the ABC does not hand the adapter the ledger).
+  **No mutation of `CMA` or `public_equity_path`** — both are read-only
+  inputs; the adapter must not write back to the dataframes / Series /
+  CMA dataclass it received. **No hidden / global state** between
+  invocations. **No randomness** in any current PE engine. A future
+  stochastic variant must declare itself under a separate engine name
+  (e.g., `pe.engine="stairs_mc"`) and document its randomness contract
+  explicitly — `pe.engine="ta"` and `pe.engine="stairs"` are reserved
+  for deterministic engines forever. Output schema must be the
+  unmodified `PROJECTION_COLUMNS` (plus the `sleeve` column the
+  factory wraps it with); engine-specific extensions belong in
+  `adapter.diagnostics()`, not in the projection frame.
 * **All adapters** — lazy backend imports if the adapter has an
   optional dependency. Any non-stub adapter ships with: structural
   parity tests against the stub, at least one numerical anchor case,
@@ -2278,7 +2293,6 @@ Schema rules:
 Per quarter ``t`` for a fund with ``sleeve = s``:
 
 ```
-expected_quarterly_pe = cma.expected_returns_annual[s] / 4
 expected_quarterly_pu = cma.expected_returns_annual["public_equity"] / 4
 realized_quarterly_pu = public_equity_path.get(quarter_t, expected_quarterly_pu)
 
