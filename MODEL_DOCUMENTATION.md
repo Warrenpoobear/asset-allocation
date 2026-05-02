@@ -2115,6 +2115,321 @@ End-to-end:
 
 ---
 
+## Phase 7 design (pre-implementation) — STAIRS PE adapter
+
+> **One-line goal.** Replace the TA model's constant ``growth_pct``
+> with a CMA-driven, public-equity-coupled growth term so PE NAV
+> responds to public-side scenario moves. Introduce a PE adapter
+> pattern (mirroring the allocation / implementation layers) so TA
+> stays the default and STAIRS is opt-in. **Resolves L1 partially**:
+> the "free return lift" mechanism that ``clustered_calls`` and
+> ``delayed_pe_distributions`` produced under TA is closed; any
+> residual scenario-driven PE return effect under STAIRS is the
+> *real* timing-coupling term, not an artifact.
+>
+> Strictly assumption-layer work — no objective reformulation, no
+> Monte Carlo, no recommitment optimizer, no ledger schema change.
+
+### Scope reset
+
+In PE-modeling literature STAIRS often connotes **stochastic / Monte
+Carlo** cash-flow paths with regime switching. That is an
+architectural change (the engine is single-path by construction) and
+explicitly out of scope here. Phase 7 ships a **deterministic,
+single-path** STAIRS variant: same call schedule, same distribution
+curve, same NAV chain — only the per-quarter NAV-mark term changes.
+Stochastic / Monte Carlo extensions are deferred to a future phase.
+
+### What STAIRS replaces vs the current TA model
+
+| dimension | TA today | STAIRS v1 |
+|---|---|---|
+| NAV growth driver | constant ``growth_pct`` | ``idiosyncratic_drift_pct + beta · realized_public_equity_excess_return`` |
+| Coupling to public-side scenarios | none (drives L1) | proportional to ``beta`` per sleeve |
+| Cash-call / distribution mechanics | ``rate_of_contribution``, ``bow``, ``yield_pct``, commitment-period schedule | unchanged |
+| Per-fund projection schema | ``PROJECTION_COLUMNS`` (10 cols) | unchanged |
+| Deterministic | yes | yes (single-path, deterministic in inputs) |
+| Multi-path / Monte Carlo | no | **no** — explicitly deferred |
+| Recommitment optimizer | no | **no** — out of scope |
+
+Net change: one term in the TA recursion is replaced. Everything
+else (call schedule, distribution curve, per-row schema) is
+byte-compatible. This is the smallest structural change that
+resolves L1.
+
+### Adapter pattern
+
+New module layout (mirrors the ``allocation/`` and
+``implementation/`` adapter layers):
+
+```
+pe/
+  base.py             # PEAdapter ABC
+  ta_adapter.py       # TAAdapter — wraps the existing TA model
+  stairs_adapter.py   # STAIRSAdapter — new
+  factory.py          # make_pe_adapter(engine)
+  ta_model.py         # unchanged
+  pacing.py           # unchanged (used by TAAdapter)
+```
+
+```python
+class PEAdapter(ABC):
+    @abstractmethod
+    def project_horizon(
+        self,
+        pacing: PEPacingConfig,
+        horizon_start: pd.Period,
+        num_quarters: int,
+        *,
+        cma: CMA,
+        public_equity_path: pd.Series,
+    ) -> pd.DataFrame:
+        """Return PE projections (PROJECTION_COLUMNS schema) for the
+        configured funds, filtered to the horizon. Both ``cma`` and
+        ``public_equity_path`` are required arguments — the TA adapter
+        ignores them, which is fine.
+        """
+```
+
+Engine selector: a new ``pe.engine: Literal["ta", "stairs"] = "ta"``
+field on ``BaseConfig.pe``. Default is ``ta``; every existing config
+keeps its behavior bit-stable.
+
+### Required PE input schema
+
+``PEPacingConfig`` extends with optional STAIRS fields. Required
+when ``pe.engine == "stairs"``; absent fails loudly at config
+validation time:
+
+```yaml
+ta_defaults:
+  lifetime_years: 12
+  commitment_period_years: 4
+  rate_of_contribution: [0.25, 0.30, 0.25, 0.20]
+  bow: 2.5
+  yield_pct: 0.0
+  growth_pct: 0.13                  # TA only; STAIRS ignores
+
+stairs_defaults:                    # NEW. Required when pe.engine == "stairs".
+  per_sleeve:
+    pe_buyout:
+      idiosyncratic_drift_pct: 0.05  # annual; replaces TA growth_pct
+      beta_to_public_equity:    1.20
+    pe_venture:
+      idiosyncratic_drift_pct: 0.06
+      beta_to_public_equity:    1.50
+    # ... one entry per pe_* sleeve in allocation.stub_weights
+
+funds:
+  - name: BuyoutFund_2026Q1
+    commitment_usd: 25000000
+    vintage: "2026Q1"
+    sleeve: pe_buyout
+```
+
+Schema rules:
+
+* ``idiosyncratic_drift_pct`` finite, ``|x| < 1.0`` (same
+  percent-vs-decimal guard as Phase 5 ER).
+* ``beta_to_public_equity`` finite. No bounds (values > 2 are
+  documented unusual but allowed).
+* Cross-config validator: when ``pe.engine == "stairs"``,
+  ``stairs_defaults.per_sleeve`` keys must equal the ``pe_*``
+  subset of ``allocation.stub_weights``. Missing or extra sleeves
+  fail with a precise diff (mirrors Phase 5 CMA bucket-set check).
+* When ``pe.engine == "ta"``, ``stairs_defaults`` is ignored
+  (allowed but not required).
+
+### STAIRS recursion
+
+Per quarter ``t`` for a fund with ``sleeve = s``:
+
+```
+expected_quarterly_pe = cma.expected_returns_annual[s] / 4
+expected_quarterly_pu = cma.expected_returns_annual["public_equity"] / 4
+realized_quarterly_pu = public_equity_path.get(quarter_t, expected_quarterly_pu)
+
+excess  = realized_quarterly_pu - expected_quarterly_pu
+drift   = stairs_defaults.per_sleeve[s].idiosyncratic_drift_pct / 4
+beta    = stairs_defaults.per_sleeve[s].beta_to_public_equity
+
+growth_pct_q = drift + beta * excess
+growth_pct_q = max(growth_pct_q, -0.99)         # required clipping
+nav_mark_t   = nav_after_dist * growth_pct_q
+```
+
+Quarters outside the public-equity path (pre-horizon for funds with
+vintages before ``horizon_start``, or post-horizon) default to
+``excess = 0`` — i.e., the path-uninformed quarters use ``drift``
+alone. Documented as "we don't know what happened; assume CMA
+expectation." This keeps determinism: same fund + same horizon +
+same ``public_equity_path`` → same projection bytes.
+
+#### Required tightening: growth-term clipping
+
+> **``growth_pct_q ≥ -0.99``**, enforced at the per-quarter recursion
+> step. NAV cannot drop below zero (-100%); upside is unbounded
+> (consistent with the rest of the model). Without this, a deep
+> public drawdown × high beta could push ``growth_pct_q`` below -1
+> and produce a negative NAV chain — breaking implicit economic
+> constraints and corrupting downstream distribution / IRR
+> diagnostics.
+>
+> The clip is a **domain constraint**, not a silent repair. The
+> count of quarters where the clip activated is surfaced in the
+> diagnostics so the user sees when it's biting.
+
+### Cash-call / distribution / NAV contract
+
+**Unchanged.** STAIRS uses the TA call schedule and distribution
+curve verbatim. Only the NAV-mark term changes. ``PROJECTION_COLUMNS``
+is byte-compatible. The orchestrator's PE-flow emission code is
+unchanged — it consumes the same frame regardless of engine.
+
+This is load-bearing: the ledger invariants (per-source pairing
+test L5; per-quarter zero-sum tests for ``pe_call`` and
+``pe_distribution``; end-of-quarter NAV checks) all remain valid
+without engine-specific branches.
+
+### How outputs enter the ledger
+
+No change. The orchestrator's per-quarter loop (``_build_ledger``
+steps 3–5: ``pe_call``, ``pe_distribution``, ``pe_nav_mark``) emits
+the same rows. STAIRS just produces a frame with the same columns;
+the only difference is the *values* in ``nav_mark_usd`` and
+``nav_end_usd``.
+
+### Determinism contract
+
+* ``STAIRSAdapter.project_horizon`` is a **pure function** of
+  ``(pacing, horizon, cma, public_equity_path)``. No module-level
+  state, no clocks, no randomness.
+* Same inputs → byte-identical outputs.
+* ``public_equity_path`` is computed deterministically from
+  ``fixture_scenario.returns`` (already deterministic).
+* CMA dump is in ``config_hash`` (Phase 5); fixture scenario in
+  ``fixtures_hash``; both already invalidate ``run_id`` correctly.
+  ``stairs_defaults`` is in ``cfg.pe_pacing.model_dump`` and
+  flows through ``config_hash`` automatically.
+
+### Parity tests vs TA
+
+The structural anchor: **STAIRS at ``beta = 0`` and
+``idiosyncratic_drift_pct = TA.growth_pct`` for every sleeve must
+produce byte-identical output to TA**. Same pattern as riskfolio's
+binding-equality structural parity.
+
+1. ``test_stairs_at_zero_beta_matches_ta_per_fund`` — for the
+   shipped fixture, set ``beta=0,
+   idiosyncratic_drift_pct=ta_defaults.growth_pct``;
+   ``STAIRSAdapter.project_horizon(...)`` must equal
+   ``TAAdapter.project_horizon(...)`` to ``1e-9`` USD per cell.
+2. ``test_stairs_engine_at_parity_yields_byte_stable_orchestrator_run``
+   — at ``pe.engine=stairs`` with the parity settings, the full
+   orchestrator run produces byte-identical ledger rows to the
+   ``pe.engine=ta`` run.
+
+These two pin that STAIRS is a strict generalization, not a
+re-implementation that drifts.
+
+### Numerical anchor tests (beyond parity)
+
+3. **Beta amplification under drawdown.** Under ``public_drawdown``,
+   STAIRS at ``beta=1.5`` produces a strictly lower terminal PE
+   NAV than at ``beta=0`` for the affected quarters. Closed-form
+   per-quarter delta = ``beta · excess · pre_distribution_NAV``.
+4. **Idiosyncratic-only path.** At ``beta=0``, varying
+   ``idiosyncratic_drift_pct`` from 0.05 to 0.13 changes terminal
+   PE NAV monotonically — proves the drift term is wired.
+5. **Public-equity decoupling.** At ``beta=0``, two scenarios that
+   differ only in ``fixture_scenario.returns.public_equity`` produce
+   identical PE projections — proves no leakage.
+6. **Linear commitment property.** Two funds in the same sleeve
+   with same vintage and split commitment (``$X + $Y`` vs
+   ``$X+Y``) produce summed-equal ``pe_*`` flows under STAIRS — pins
+   linearity in commitment size, a TA property that must survive.
+7. **Growth-clip activation under extreme drawdown.** A fixture
+   with public_equity at ``-50%`` for one quarter × ``beta=2.0``
+   would push ``growth_pct_q`` below ``-1.0``; the clip must
+   activate, the NAV chain must stay non-negative, and the
+   diagnostic ``clipped_quarters`` count must be ``> 0``.
+
+### Fallback behavior if STAIRS is unavailable
+
+* Default config ships ``pe.engine: ta``. Existing runs unchanged.
+* If a config sets ``pe.engine: stairs`` but ``stairs_defaults``
+  is missing or the sleeve set doesn't match
+  ``allocation.stub_weights``'s ``pe_*`` subset, **validation
+  fails loudly at config load** (same pattern as Phase 5 CMA
+  bucket-set check; same pattern as Phase 4a removed-field
+  check). **No silent fallback to TA.**
+* A future stochastic STAIRS variant gets a different engine name
+  (``stairs_mc``) — ``stairs`` v1 is reserved for the
+  deterministic single-path adapter.
+
+### Reports / diagnostics
+
+Optional, nice-to-have, not load-bearing:
+
+* In the PE summary section of ``report.md``, show the engine name
+  (``ta`` or ``stairs``).
+* Under STAIRS, show per-sleeve ``(beta, idiosyncratic_drift_pct)``
+  and the count of quarters where the growth clip activated.
+
+### What Phase 7 is **not**
+
+Listed explicitly so a future contributor reads them as guardrails:
+
+* **Not stochastic.** Single-path, deterministic.
+* **Not Monte Carlo / multi-path / regime-switching / GBM /
+  jump-diffusion.** Deferred to a future phase.
+* **Not a recommitment optimizer.** Configured fund schedule
+  remains the full plan.
+* **Not a new ledger schema.** ``PROJECTION_COLUMNS`` is unchanged.
+* **Not an L8 fix.** Rebalancer's perception of PE doesn't change.
+* **Not an L2 fix.** Dynamics remain deterministic.
+* **Not a public-side return generator.** CMA's role is
+  ``expected_returns_annual`` only; public return paths still
+  come from ``fixture_scenario.returns``.
+* **Not a per-sleeve coupling generalization.** Phase 7 couples
+  every PE sleeve to ``public_equity`` only. A future phase can
+  introduce per-sleeve coupling-source mappings (e.g., ``pe_infra
+  → public_bond + public_equity`` blends); not in scope here.
+
+### L1 status under STAIRS
+
+L1 flips to ``[PARTIALLY RESOLVED 2026-05-02, Phase 7]`` on
+implementation. Resolution wording:
+
+* **Free return lift removed.** Under STAIRS, scenarios that move
+  public_equity move PE proportional to ``beta`` per sleeve. The
+  TA-era artifact where ``clustered_calls`` and
+  ``delayed_pe_distributions`` produced unmotivated cumulative
+  return lift is closed.
+* **Residual timing effect remains, but is now economic, not
+  artifactual.** Calls deployed during a public drawdown buy at
+  a NAV that subsequently recovers if public_equity recovers —
+  that's the actual timing-coupling channel, not a bug.
+* **L1 stays open under TA.** When a user runs ``pe.engine=ta``
+  the original artifact persists. The doc note records this
+  engine-conditional resolution.
+
+### Locked design choices
+
+* Single-path, deterministic.
+* Coupling reference: ``public_equity`` only (no per-sleeve
+  mapping yet).
+* Excess baseline: ``cma.expected_returns_annual["public_equity"] / 4``
+  (CMA-anchored; no separate parameter).
+* Adapter module layout: ``pe/base.py`` + ``pe/ta_adapter.py`` +
+  ``pe/stairs_adapter.py`` + ``pe/factory.py``.
+* Required tightening: ``growth_pct_q ≥ -0.99`` clip at the
+  per-quarter recursion step, with the clip count surfaced in
+  diagnostics.
+* L1 marked ``[PARTIALLY RESOLVED]`` under STAIRS; stays open under TA.
+
+---
+
 ## Change Log
 
 Entries are appended in chronological order. Each entry: date, commit hash,
@@ -3382,3 +3697,68 @@ what changed, why, impact on outputs, backward-compatibility flag.
 * **Backward-compatible.** Yes. ``Scenario`` gains a new optional
   field with ``None`` default; existing scenarios pass through
   unchanged. The new schema and the new scenario are additive.
+
+### 2026-05-02 — Phase 7 design locked (STAIRS PE adapter, pre-implementation)
+
+* **What.** Lock the §Phase 7 design ahead of implementation.
+  Replaces the TA model's constant ``growth_pct`` with a CMA-driven,
+  public-equity-coupled growth term, behind a new PE adapter
+  pattern. Six locked decisions:
+  1. **Scope is deterministic single-path.** Not Monte Carlo, not
+     multi-path, not regime-switching. Stochastic STAIRS deferred
+     to a future phase.
+  2. **Adapter pattern.** New ``pe/base.py`` (``PEAdapter`` ABC) +
+     ``pe/ta_adapter.py`` + ``pe/stairs_adapter.py`` +
+     ``pe/factory.py``. Engine selector ``BaseConfig.pe.engine ∈
+     {"ta", "stairs"}``, default ``"ta"`` so existing configs are
+     bit-stable.
+  3. **STAIRS recursion.** Per quarter:
+     ``growth_pct_q = (drift / 4) + beta · (realized_pu - expected_pu)``
+     where ``expected_pu = cma.expected_returns_annual["public_equity"] / 4``.
+     Coupling reference is ``public_equity`` only (no per-sleeve
+     mapping yet). Excess baseline is CMA-anchored (no separate
+     parameter).
+  4. **Required clipping.** ``growth_pct_q ≥ -0.99`` enforced at
+     the per-quarter step. NAV cannot drop below zero; upside
+     unbounded. The clip count is surfaced in diagnostics so
+     activation is visible. This is a **domain constraint**, not
+     silent repair.
+  5. **Cash-call / distribution / NAV schema unchanged.** Only the
+     NAV-mark term differs; ``PROJECTION_COLUMNS`` stays
+     byte-compatible. The orchestrator's PE-flow emission code
+     does not branch on engine.
+  6. **Loud failure on misconfiguration.** When
+     ``pe.engine=stairs`` but ``stairs_defaults`` is missing or
+     its sleeve set doesn't equal the ``pe_*`` subset of
+     ``allocation.stub_weights``, validation fails at config load
+     with a precise diff. **No silent fallback to TA.**
+* **Parity contract.** STAIRS at ``beta=0`` and
+  ``idiosyncratic_drift_pct = ta_defaults.growth_pct`` for every
+  sleeve must produce **byte-identical** projections to TA. Two
+  parity tests pin this — same pattern as riskfolio's
+  binding-equality structural anchor.
+* **Numerical anchors planned (5 beyond parity).** Beta
+  amplification under drawdown, idiosyncratic-only path
+  monotonicity, public-equity decoupling at ``beta=0``, linear
+  commitment property, growth-clip activation under extreme
+  drawdown.
+* **L1 status.** Will flip to
+  ``[PARTIALLY RESOLVED 2026-05-02, Phase 7]`` on implementation:
+  the artifact-driven "free return lift" mechanism is closed under
+  STAIRS; under TA it persists and is documented as
+  engine-conditional. Residual scenario-driven PE return effect
+  under STAIRS is the *real* timing-coupling channel, not a bug.
+* **What this is not.** Not stochastic, not Monte Carlo, not
+  regime-switching, not GBM, not jump-diffusion, not a
+  recommitment optimizer, not a new ledger schema, not an L8 fix,
+  not an L2 fix, not a public-side return generator, not a
+  per-sleeve coupling generalization.
+* **Why.** Phase 6 closed L6 (correlation shocks); next
+  highest-value structural realism is the public→PE transmission
+  channel. This is what makes timing-scenario differences
+  *economic* rather than *artifactual*. STAIRS first, stochastic
+  PE later.
+* **Impact on outputs.** None — design only. When Phase 7 ships,
+  default-config output is byte-stable (``pe.engine=ta`` is
+  default and is bit-equivalent to today).
+* **Backward-compatible.** Yes (design only).
