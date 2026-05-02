@@ -2806,6 +2806,305 @@ Resolution wording:
 
 ---
 
+## Phase 9 design (pre-implementation) — manager / fund metadata enrichment
+
+> **One-line goal.** Enrich PE pacing inputs with manager and fund
+> metadata so client-realistic questions become answerable in the
+> report (commitments / unfunded / calls / distributions / NAV by
+> manager; vintage and manager concentration). **No PE math change.**
+> **No ledger schema change.** Allocator never sees managers; the
+> rebalancer never sees managers; the ledger continues to use
+> ``source = "pacing:<fund_name>"`` exactly as today. Manager
+> identity is a labeling layer on top of the existing per-fund
+> projection.
+
+### Architectural rule (now load-bearing)
+
+```
+managers / funds   → PE pacing model (FundConfig)
+PE sleeves         → allocation model (stub_weights[pe_*])
+PE illiquidity     → rebalancing overlay (Phase 8)
+```
+
+Phase 9 stays inside the first lane. The other two are untouched.
+
+### Three load-bearing decisions
+
+#### A. Additive schema, not replacement
+
+``FundConfig`` gains optional fields. Every existing config (the
+shipped fixture; any out-of-tree config) continues to validate
+without modification. The orchestrator's per-fund projection loop
+reads only the fields the math needs (``commitment_usd``,
+``vintage``, ``sleeve``, ``name``); the new fields flow into
+reporting only.
+
+#### B. PE math unchanged, ledger schema unchanged
+
+* TA model untouched.
+* STAIRS adapter untouched.
+* ``PROJECTION_COLUMNS`` unchanged.
+* ``pe_call`` / ``pe_distribution`` / ``pe_nav_mark`` ledger rows:
+  same shape, **same ``source = "pacing:<fund_name>"`` value as
+  today**. Manager identity does **not** enter the ledger.
+* §5.1 invariants untouched.
+
+The only place the new metadata appears is in **report-side
+aggregation** plus **diagnostics surfacing**.
+
+#### C. Loud failure for inconsistent metadata, no silent inference
+
+When the new fields are present, validation enforces internal
+consistency. When they're absent, no fallback / synthesis — just
+absent in reports. ``(unknown)`` aggregation when ``manager`` is
+partial; no all-or-none requirement.
+
+### Schema additions
+
+``FundConfig`` extends with all-optional fields:
+
+```python
+class FundConfig(BaseModel):
+    model_config = _STRICT
+    name: str
+    commitment_usd: float = Field(gt=0.0)
+    vintage: str
+    sleeve: str
+    # ---- Phase 9 additions, all optional ----
+    manager: str | None = None
+    fund_id: str | None = None
+    strategy: Literal["buyout", "venture", "growth", "credit",
+                      "real_estate", "infra", "secondary"] | None = None
+    fee_model: _FeeModelConfig | None = None
+    status: Literal["active", "committed", "exited", "planned"] = "active"
+```
+
+``_FeeModelConfig``:
+
+```python
+class _FeeModelConfig(BaseModel):
+    model_config = _STRICT
+    management_fee_pct:    float = Field(default=0.0, ge=0.0, le=0.05)
+    carried_interest_pct:  float = Field(default=0.0, ge=0.0, le=0.30)
+    preferred_return_pct:  float = Field(default=0.0, ge=0.0, le=0.20)
+```
+
+> **`fee_model` is metadata-only.** Phase 9 does **not** consume any
+> of these in the projection math. They're stored as documentation
+> of fund-level economics for future phases. The schema may evolve
+> when fee economics are actually designed (Phase 10+); breaking
+> changes will be loud-failure-friendly.
+
+### Required tightening 1 — `FundConfig.name` must be **globally unique**
+
+Because the ledger source remains ``source = "pacing:<fund_name>"``
+and the report joins per-fund projection rows back to fund metadata
+by ``fund_name``, two funds with the same ``name`` would create
+ambiguous ledger sources and ambiguous metadata joins.
+
+```
+Locked rule:
+  FundConfig.name must be unique globally across pacing.funds.
+  fund_id, when present on any fund, must also be unique globally.
+  (manager, name) uniqueness may remain as an additional check,
+   but it is NOT sufficient — name alone must be globally unique.
+```
+
+### Required tightening 2 — `fund_id` is **not** hash-stable across rename
+
+Earlier rough framing suggested ``fund_id`` could give "stable
+hashing across a rename." That is **not** true: ``name`` remains in
+``cfg.pe_pacing.funds`` (which is dumped into ``config_hash``) and
+in the ledger ``source`` field. Renaming a fund changes both.
+
+```
+Locked semantics:
+  fund_id is a stable EXTERNAL identifier — useful for client
+  systems, accounting, manager portals, etc. mapping. It does NOT
+  preserve run hash stability if FundConfig.name changes, because
+  name remains part of config and ledger source identity.
+```
+
+### Required tightening 3 — `status` semantics table
+
+| status      | Projection behavior                        | Forward-flow diagnostics         |
+|---|---|---|
+| ``active``    | included                                   | included                         |
+| ``committed`` | included                                   | included                         |
+| ``planned``   | included if vintage falls within horizon   | included in commitment / vintage diagnostics |
+| ``exited``    | **excluded** from forward projections      | **excluded** from forward-flow totals (calls / distributions / unfunded / NAV); may appear in a metadata/status summary |
+
+Phase 9 is not a historical-reporting layer — `exited` funds are
+omitted from forward-flow diagnostics entirely. A future "historical
+fund window" report could re-include them under explicit labeling.
+
+### Cross-config validation rules (when fields are present)
+
+1. ``FundConfig.name`` is **globally unique** across
+   ``pacing.funds``. (New rule, lifts an unstated convention into
+   an enforced invariant.)
+2. ``fund_id``, when set on any fund, is **globally unique** across
+   ``pacing.funds``.
+3. ``strategy`` (when set) must be consistent with ``sleeve``:
+
+   | strategy        | required sleeve       |
+   |---|---|
+   | ``buyout``      | ``pe_buyout``         |
+   | ``venture``     | ``pe_venture``        |
+   | ``growth``      | ``pe_growth``         |
+   | ``credit``      | ``pe_credit``         |
+   | ``real_estate`` | ``pe_re``             |
+   | ``infra``       | ``pe_infra``          |
+   | ``secondary``   | any ``pe_*`` sleeve   |
+
+   Mismatch fails at config validation with both values in the
+   error.
+4. ``(manager, name)`` uniqueness when ``manager`` is set —
+   redundant with rule 1 but kept as a defence-in-depth check.
+
+Rules 1–4 are pydantic-level (model validators on
+``PEPacingConfig``).
+
+### Carrier through TA / STAIRS adapters
+
+``PROJECTION_COLUMNS`` stays exactly as today (Phase 7
+byte-stability preserved). The orchestrator (or the report
+renderer) joins the per-fund projection frame against
+``cfg.pe_pacing.funds`` at report time to attach metadata. The
+adapter layer is **not** a metadata pipe — it's a math pipe.
+Cleaner separation; keeps the Phase 7 STAIRS parity contract
+intact.
+
+### Reporting / diagnostics — where the new fields surface
+
+A new ``## PE program structure`` section in ``report.md``,
+rendered when at least one fund carries any new metadata field.
+Six diagnostics, all pure aggregations of the existing per-fund
+projection frame plus the metadata join:
+
+1. **Commitment summary.** Total commitment per (manager, sleeve).
+2. **Unfunded by manager.** Sum of
+   ``max(0, commitment_usd - cumulative_calls_through_horizon_end)``
+   per manager. Reported in dollars and as % of total commitment.
+3. **Per-quarter call / distribution attribution.** Per-manager
+   aggregate ``pe_call`` and ``pe_distribution`` totals over the
+   horizon.
+4. **Vintage concentration.** Total commitment grouped by vintage
+   year.
+5. **Manager concentration.** Top-3 managers by commitment, with
+   share of total PE commitment.
+6. **NAV by manager (end of horizon).** Aggregate end-of-horizon
+   ``nav_end_usd`` per manager.
+
+When ``manager`` is set on some funds and not others, unset funds
+aggregate under a literal ``"(unknown)"`` row — explicit, visible,
+not synthesized.
+
+When **no** fund has any Phase 9 fields set, the section is
+**omitted entirely**. The default-config run is byte-stable.
+
+### Determinism contract
+
+* Schema additions are pure data; no randomness.
+* Reporting aggregations are pure groupbys over the existing
+  per-fund projection frame; deterministic in inputs.
+* The new metadata is folded into ``cfg.pe_pacing.model_dump``,
+  which is already in ``config_hash`` — so a manager-name change
+  invalidates ``run_id`` correctly.
+
+### Tests planned (15)
+
+Schema (8):
+
+1. ``manager`` accepted as optional string; absent fund → no error.
+2. ``fund_id`` global uniqueness enforced when set.
+3. ``strategy`` ↔ ``sleeve`` consistency: matching pair passes;
+   mismatch fails with both values in error.
+4. ``status`` enum: ``"active"`` / ``"committed"`` / ``"exited"``
+   / ``"planned"`` accepted; ``"frozen"`` (typo) fails.
+5. ``_FeeModelConfig`` per-cell bounds.
+6. ``(manager, name)`` uniqueness when manager set.
+7. ``FundConfig.name`` globally-unique enforced (this is the
+   tightening).
+8. ``secondary`` strategy compatible with any ``pe_*`` sleeve.
+
+Behavior (3):
+
+9. ``status: "exited"`` fund: not present in the projection or in
+   any ledger row.
+10. ``status: "planned"`` fund with vintage outside horizon: not
+    in projection. With vintage inside horizon: present (same as
+    active).
+11. ``_FeeModelConfig`` set: stored on the fund object but does
+    not change projection numbers — anchor against a TA-equivalent
+    fund without ``fee_model``.
+
+Report (3):
+
+12. New ``## PE program structure`` section rendered when
+    ``manager`` is set on any fund.
+13. Section **omitted** when no Phase 9 fields are set on any fund.
+14. ``(unknown)`` aggregation when ``manager`` partial — set funds
+    aggregate under their manager; unset under ``"(unknown)"``.
+
+End-to-end (1):
+
+15. Default shipped fixture (no Phase 9 fields) produces
+    byte-identical ``ledger.parquet``, ``manifest.json``, and
+    pre-Phase-9 report sections. The new section is omitted.
+
+### What Phase 9 is **not**
+
+Listed explicitly so a future contributor reads them as guardrails:
+
+* **Not a fee economics change.** ``fee_model`` fields are stored,
+  not consumed by the projection. Charging management fees on
+  unfunded commitment, reducing distributions for carried interest,
+  and preferred-return waterfalls are all Phase 10+.
+* **Not a recommitment optimizer.** ``funds`` list remains the
+  full plan.
+* **Not a manager-level coupling override.** All PE sleeves still
+  share the single ``public_equity`` coupling reference under
+  STAIRS. Per-manager beta is a future phase.
+* **Not a secondary-market sale path.** L8 still says PE doesn't
+  trade in rebalance.
+* **Not a STAIRS_MC / stochastic upgrade.**
+* **Not an L14 fix.** Linear transaction cost only; ``fee_model``
+  fields are not transaction-cost terms.
+* **Not a new ledger schema.** ``pe_*`` flow rows still use
+  ``source = "pacing:<fund_name>"``.
+* **Not a historical-reporting layer.** Exited funds are omitted
+  from forward-flow diagnostics.
+
+### L-status under Phase 9
+
+* **L1** — unchanged. STAIRS still resolves the artifact under
+  ``pe.engine="stairs"``; TA still has it. No new math.
+* **L8** — unchanged. RESOLVED in Phase 8.
+* **L14** — unchanged. Still open. ``fee_model`` is metadata, not
+  cost-model fix.
+
+### Locked design choices
+
+* All new fields **optional**; existing configs validate unchanged.
+* ``FundConfig.name`` **globally unique** (load-bearing rule).
+* ``fund_id`` optional + globally unique when set; **not** a hash-
+  stability mechanism.
+* ``status`` semantics per the table above; ``exited`` excluded
+  from forward projection and forward-flow diagnostics.
+* ``fee_model`` stored but **not consumed** by projection math
+  (Phase 10+ scope); schema may evolve when fee economics land.
+* ``PROJECTION_COLUMNS`` byte-stable — metadata joined at report
+  time, not embedded in adapter output.
+* New ``## PE program structure`` report section omitted when no
+  Phase 9 fields are set.
+* ``(unknown)`` aggregation when ``manager`` is partial; no
+  all-or-none requirement.
+* Ledger ``source`` unchanged (``pacing:<fund_name>``). Manager /
+  fund_id do **not** enter the ledger.
+
+---
+
 ## Change Log
 
 Entries are appended in chronological order. Each entry: date, commit hash,
@@ -4397,3 +4696,68 @@ what changed, why, impact on outputs, backward-compatibility flag.
   default needs to either accept the corrected behavior or set
   ``base.rebalance.illiquid_overlay: false`` — which is loud about
   its non-default state via ``config_hash``.
+
+### 2026-05-02 — Phase 9 design locked (manager/fund metadata enrichment, pre-implementation)
+
+* **What.** Lock the §Phase 9 design ahead of implementation.
+  Enriches PE pacing inputs with manager and fund metadata so
+  client-realistic questions become answerable in the report
+  (commitments / unfunded / calls / distributions / NAV by manager;
+  vintage and manager concentration). Strictly a labeling +
+  diagnostics layer; **no PE math change**, **no ledger schema
+  change**, **no allocator change**.
+* **Six confirmed decisions.**
+  1. ``FundConfig`` gains optional ``manager``, ``fund_id``,
+     ``strategy``, ``fee_model``, ``status``. All-or-nothing
+     adoption is **not** required — partial use aggregates unset
+     under ``"(unknown)"``.
+  2. ``fee_model`` stored as metadata; **not consumed by
+     projection math**. Future fee-economics phase (Phase 10+) may
+     evolve the schema and consume it; metadata-only in v1.
+  3. ``status: "exited"`` is **excluded** from forward projections
+     and forward-flow diagnostics.
+  4. ``PROJECTION_COLUMNS`` byte-stable — metadata joined at report
+     time, not embedded in adapter output. Phase 7 STAIRS parity
+     contract preserved.
+  5. Ledger ``source`` unchanged (``pacing:<fund_name>``). Manager
+     identity does **not** enter the ledger.
+  6. ``(unknown)`` aggregation when ``manager`` partial.
+* **Three required tightenings (per audit).**
+  1. **``FundConfig.name`` must be globally unique.** Because the
+     ledger source remains ``pacing:<fund_name>``, two funds with
+     the same ``name`` would create ambiguous ledger sources and
+     ambiguous metadata joins. ``(manager, name)`` uniqueness is
+     not sufficient; ``name`` alone must be globally unique.
+  2. **``fund_id`` is NOT hash-stable across fund renames.**
+     ``name`` remains in ``config_hash`` and the ledger ``source``
+     field; renaming changes both. ``fund_id`` is a stable
+     **external** identifier (client systems, accounting,
+     reporting) — not a hash-stability mechanism.
+  3. **``status`` semantics table is locked.** ``active`` /
+     ``committed`` → included. ``planned`` → projected only if
+     vintage falls within horizon. ``exited`` → excluded from
+     forward projections and forward-flow diagnostics.
+* **Strategy↔sleeve consistency.** When ``strategy`` is set, the
+  ``sleeve`` field must match the documented mapping
+  (``buyout``→``pe_buyout`` etc.); ``secondary`` is the one
+  flexible case (compatible with any ``pe_*`` sleeve). Mismatch
+  fails at config validation with both values in the error.
+* **What Phase 9 is not.** Not a fee economics change, not a
+  recommitment optimizer, not a per-manager STAIRS coupling, not a
+  secondary-market sale path, not a STAIRS_MC upgrade, not an L14
+  fix, not a new ledger schema, not a historical-reporting layer.
+* **L-status.** L1 / L8 / L14 unchanged.
+* **Tests planned (15).** Schema (8): each new field's validation
+  rules, including the globally-unique ``name`` and ``fund_id``
+  rules and the ``strategy↔sleeve`` mapping. Behavior (3):
+  ``exited`` skipped, ``planned`` projected per horizon,
+  ``fee_model`` stored-not-consumed. Report (3): new section
+  rendered only when metadata present, omitted when not, partial
+  ``(unknown)`` aggregation. End-to-end (1): default fixture
+  byte-identical to pre-Phase-9.
+* **Impact on outputs.** Design only — none. When Phase 9 ships,
+  shipped-fixture runs (no Phase 9 metadata in the fixture) are
+  byte-identical to pre-Phase-9. The new ``## PE program structure``
+  section appears only when at least one fund carries a Phase 9
+  field.
+* **Backward-compatible.** Yes (design only).
