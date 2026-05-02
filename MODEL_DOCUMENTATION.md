@@ -5684,6 +5684,28 @@ Phase 14 closes the **workbook-ingestion + entity-schema** seat that
 populates the producer config from real SFO data. L19 stays at
 PARTIALLY RESOLVED until Phase 14 — see "L19 status" below.
 
+> **Reviewer tightening 1 — cash movement / source-of-cash
+> boundary.** Phase 13 emits ``distribution_inflow`` rows that
+> represent **income recognition into modeled cash**. It does
+> NOT model the upstream account-/entity-level cash mechanics
+> that move dollars from origin to the family-office liquidity
+> pool. Phase 13 treats configured entries as **already
+> approved, distributable, and payable** to the modeled
+> liquidity pool. It does not determine whether the cash
+> originated in a project LLC, OpCo, trust, or holding entity,
+> nor does it model inter-entity transfer mechanics (declarations,
+> approvals, withholding, distribution waterfalls,
+> trust-payout calendars, governance approvals, banking
+> settlements).
+>
+> That work — the *cash-movement engine* and the **entity /
+> account ownership graph** — sits at Phase 14+ (cash-flow
+> ingestion + entity schema). The Phase 12.5 reviewer-tightening-1
+> posture stands at the producer side: Phase 13 trusts the
+> upstream classification it receives. The standing-principle
+> audit table (below) captures *what is asserted* by the producer;
+> it does not assert *how the cash arrived in the household*.
+
 ### Diagnosis
 
 The Phase 12.5 boundary (commit ``9e77fb1``):
@@ -5900,6 +5922,34 @@ into machine-checkable code. Phase 12.5's ``compute_distributable_income_base``
 groups by source for the by-source rollup; with Phase 13, every
 rollup key now follows the canonical convention exactly.
 
+> **Reviewer tightening 2 — duplicate (source, quarter) pairs are
+> allowed.** Multiple ``DistributionEntryConfig`` entries may emit
+> the same ``distribution:<domain>:<id>`` source string in the same
+> quarter. This is **legitimate and expected** — the same building
+> may declare a recurring quarterly rent distribution PLUS a
+> one-time refi-proceeds distribution in the same quarter, or an
+> OpCo may declare a regular operating distribution PLUS a special
+> dividend, both routed to the same source key. Enforcing
+> uniqueness on ``(source, quarter)`` would force such cases into
+> awkward synthetic separations.
+>
+> The audit key is **``producer_id``**, not ``(source, quarter)``.
+> ``producer_id`` is required to be globally unique across the
+> entire spec (validated at schema-load time). Each emitted
+> ``DistributionEmission`` carries its originating ``producer_id``
+> on the producer-diagnostics side, so the audit trail from
+> ledger-row → producer-config-entry remains intact even when
+> multiple emissions share a source.
+>
+> Phase 12.5's ``compute_distributable_income_base`` sums by
+> source, so multiple same-source-same-quarter rows contribute
+> additively to the by-source rollup — semantically correct
+> ("$X from this origin this quarter") without losing
+> information. The ledger itself stores each emission as its own
+> row; the per-row audit chain is preserved by the source-string +
+> quarter + amount tuple, with ``producer_id`` available on the
+> producer-diagnostics side for full traceability.
+
 ### Restricted handling
 
 ``restricted=True`` is the producer-side gate that captures
@@ -6081,7 +6131,7 @@ The Phase 12.5 standing CAVEAT line on recurring-vs-one-time
 remains in the consumer-side section; the producer-side section
 adds **quantification** of that caveat (the share is now visible).
 
-### Tests planned (13)
+### Tests planned (14)
 
 Schema (4):
 
@@ -6098,7 +6148,7 @@ Schema (4):
    - ``domain="land"`` + ``recurrence_type="recurring"`` → fails
    - All other domain × recurrence combinations validate.
 
-Producer behavior (4):
+Producer behavior (5):
 
 5. ``ConfigDrivenProducer.emit_for_quarter`` returns the entries
    matching the requested quarter, with sources formatted exactly as
@@ -6112,28 +6162,35 @@ Producer behavior (4):
    entity_id.
 8. Per-quarter purity: ``emit_for_quarter(q)`` returns the same
    emissions on repeated calls; no module-level state.
+9. **Duplicate (source, quarter) allowed (reviewer tightening 2)**:
+   two entries with the same ``(domain, entity_id, asset_id,
+   quarter)`` but distinct ``producer_id`` (e.g., recurring rent +
+   one-time refi proceeds from the same building, same quarter)
+   both emit. The ledger receives two rows; the by-source rollup
+   sums them; ``producer_id`` distinguishes them on the
+   producer-diagnostics side.
 
 Orchestrator integration (3):
 
-9. ``make_distribution_producer`` returns a ``ConfigDrivenProducer``
-   for ``engine="config"``; rejects unknown engines (Phase 14
-   placeholder).
-10. End-to-end run: a Phase 13 + Phase 12.5 fixture (4-quarter run,
+10. ``make_distribution_producer`` returns a ``ConfigDrivenProducer``
+    for ``engine="config"``; rejects unknown engines (Phase 14
+    placeholder).
+11. End-to-end run: a Phase 13 + Phase 12.5 fixture (4-quarter run,
     real_estate + opco + portfolio entries, no restricted) drives
     Owl with ``spending_base="distributable_income"``; the realized
     trailing income matches the sum of producer emissions; the
     runtime zero-income guard does NOT fire.
-11. Default-off byte-stability: ``cfg.distribution_producer = None``
+12. Default-off byte-stability: ``cfg.distribution_producer = None``
     ⇒ Phase 12.5 trajectories byte-identical; existing 251-test
     suite green.
 
 End-to-end (2):
 
-12. **Producer-diagnostic report renders** with by-domain / by-
+13. **Producer-diagnostic report renders** with by-domain / by-
     recurrence / by-confidence / top-3 / excluded-restricted
     sections; warning bands fire correctly for high concentration
     and forecast-heavy emissions.
-13. **Composes with Phase 12.5 advisory**: the report renders BOTH
+14. **Composes with Phase 12.5 advisory**: the report renders BOTH
     ``## Distribution producer (advisory)`` AND ``## Owl spending
     base (advisory)`` for an Owl run with
     ``spending_base="distributable_income"`` and a populated
@@ -6233,9 +6290,15 @@ re-litigated post-implementation:
 * Hard schema validators: ``producer_id`` unique + URL-safe
   (no colons); ``amount_usd`` > 0 + finite; ``quarter`` parses;
   domain × recurrence sanity (development/recurring; land/recurring
-  → fail).
+  → fail). **Uniqueness is on ``producer_id`` only**; multiple
+  entries may share a ``(domain, entity_id, asset_id, quarter)``
+  tuple and emit the same source string in the same quarter
+  (reviewer tightening 2).
 * Source convention enforced at emit time:
-  ``f"distribution:{domain}:{asset_id or entity_id}"``.
+  ``f"distribution:{domain}:{asset_id or entity_id}"``. Duplicate
+  ``(source, quarter)`` pairs are allowed and sum additively in the
+  by-source rollup; ``producer_id`` remains the row-level audit key
+  on the producer-diagnostics side.
 * ``restricted=True`` filters at emit time; surfaced in
   diagnostics; never reaches the ledger.
 * Recurrence and confidence captured **only** in producer
@@ -6261,6 +6324,14 @@ re-litigated post-implementation:
 * Phase 13 does NOT determine legal / tax / entity-governance
   distributability — same upstream-classification posture as
   Phase 12.5 reviewer tightening 1.
+* Phase 13 does NOT model the cash-movement / source-of-cash
+  mechanics that move dollars from origin (project LLC, OpCo,
+  trust, holding entity) to the family-office liquidity pool
+  (reviewer tightening 1). Configured entries are treated as
+  already approved, distributable, and payable. Inter-entity
+  transfer mechanics (declarations, approvals, withholding,
+  distribution waterfalls, trust-payout calendars, banking
+  settlements) sit at Phase 14+ entity / cash-flow ingestion work.
 
 ---
 
