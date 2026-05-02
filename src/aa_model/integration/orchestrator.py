@@ -74,7 +74,7 @@ def run_orchestrator(
     run_id = make_run_id(config_hash, fixtures_hash, invocation_id=invocation_id)
 
     started_at = utcnow_iso()
-    ledger, expected_externals = _build_ledger(cfg, run_id)
+    ledger, expected_externals, allocator_diagnostics = _build_ledger(cfg, run_id)
     ledger.validate(expected_externals_by_quarter=expected_externals)
 
     out_dir = repo_root / cfg.base.output.base_dir / run_id
@@ -93,6 +93,7 @@ def run_orchestrator(
             run_id=run_id,
             config_hash=config_hash,
             fixtures_hash=fixtures_hash,
+            allocator_diagnostics=allocator_diagnostics,
         )
         outputs.append("report.md")
         outputs.append("manifest.json")
@@ -118,7 +119,9 @@ def run_orchestrator(
     )
 
 
-def _build_ledger(cfg: StudyConfig, run_id: str) -> tuple[QuarterlyLedger, dict[pd.Period, float]]:
+def _build_ledger(
+    cfg: StudyConfig, run_id: str
+) -> tuple[QuarterlyLedger, dict[pd.Period, float], dict]:
     start_q = pd.Period(cfg.base.horizon.start_quarter, freq="Q-DEC")
     n_q = cfg.base.horizon.num_quarters
     initial = {b: float(v) for b, v in cfg.fixture_scenario.nav_initial.items()}
@@ -292,7 +295,7 @@ def _build_ledger(cfg: StudyConfig, run_id: str) -> tuple[QuarterlyLedger, dict[
 
         expected_externals[q] = ext_inflow_amt - spend_amt - cost_usd
 
-    return ledger, expected_externals
+    return ledger, expected_externals, alloc.diagnostics()
 
 
 def _write_ledger_parquet(df: pd.DataFrame, path: Path) -> None:

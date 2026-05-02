@@ -1367,6 +1367,20 @@ with:
   > way). This is documented behavior, not a bug; calibrate empirically
   > against the desired policy-track-vs-cost-suppress balance for
   > the target portfolio.
+  >
+  > **Advisory diagnostic, no auto-tuning.** The orchestrator's
+  > ``report.md`` emits a "Cost-aware allocator calibration (advisory)"
+  > section when ``allocation.engine=cvxportfolio``, showing the
+  > configured ``λ_norm`` against the rule-of-thumb suggested value at
+  > the run's median ``V_total`` and a regime classification
+  > (corner-dominated / tunable / policy-dominated). The allocator
+  > also exposes the per-quarter calibration history via
+  > ``alloc.diagnostics()["calibration_history"]`` for deeper
+  > inspection. **The advisory does not auto-tune ``λ_norm`` and does
+  > not influence the optimization** — the user keeps explicit control
+  > over the configured value; the diagnostic just makes the
+  > policy/cost balance legible without re-running a calibration sweep
+  > by hand.
 
   See also the §Phase 4b — normalized λ migration note in the change
   log.
@@ -2556,3 +2570,51 @@ what changed, why, impact on outputs, backward-compatibility flag.
 * **Backward-compatible.** Yes for non-buggy paths; the bps=0
   output change at small ``λ_norm`` is the bug fix itself (zero-cost
   parity now holds where it didn't).
+
+### 2026-05-02 — Phase 4b — λ calibration advisory diagnostic
+
+* **What.** Diagnostic-only surfacing of the calibration formula
+  derived in the 2026-05-02 sweep. Three additions, no objective
+  change:
+  1. ``CvxportfolioAllocator`` now records a per-quarter calibration
+     row inside ``target_at`` containing ``v_total_usd``,
+     ``bps_per_trade``, ``policy_loss_lambda_norm_used``,
+     ``suggested_policy_loss_lambda_norm`` (formula
+     ``bps_per_trade × V_total × 1e-3``), and
+     ``ratio_used_over_suggested``. The record is taken **before**
+     the cost-branch / zero-cost short-circuit so every non-q0 call
+     contributes one row regardless of cost.
+  2. ``alloc.diagnostics()`` returns ``calibration_history`` (list)
+     and ``calibration_summary`` (medians of V_total, suggested
+     λ_norm, and used/suggested ratio).
+  3. ``write_markdown_report`` accepts an optional
+     ``allocator_diagnostics`` keyword and renders a
+     "Cost-aware allocator calibration (advisory)" section when
+     ``engine=cvxportfolio`` and the calibration history is
+     non-empty. The orchestrator passes ``alloc.diagnostics()``
+     through automatically. The section reports the formula, the
+     median V_total, configured vs suggested λ_norm, the median
+     ratio, and a regime classification (corner-dominated /
+     tunable / policy-dominated) at thresholds 1e-2 and 1e2.
+* **Why.** The 2026-05-02 sweep showed default
+  ``λ_norm = 1.0`` is corner-dominated at institutional NAV scales
+  (six orders of magnitude below the engagement threshold). Without
+  per-run feedback, users have no in-line signal that their
+  configured value is mathematically inert. Surfacing the
+  rule-of-thumb suggestion alongside the configured value makes the
+  policy/cost balance legible at run time without changing the
+  model. **Strictly advisory** — no auto-tuning, no fallback, no
+  influence on the optimization.
+* **Impact on outputs.** None for shipped configs (all
+  ``engine=stub``; the renderer skips the new section when no
+  cost-aware diagnostics are present). For ``engine=cvxportfolio``
+  runs, ``report.md`` gains a new section but ``ledger.parquet`` is
+  byte-identical and ``manifest.json`` is unchanged — diagnostic
+  separation matches §Reproducibility / §Determinism contracts.
+  Trade weights are unchanged (regression test
+  ``test_calibration_diagnostics_do_not_alter_target_weights``
+  pins this). 126 tests pass (was 122).
+* **Backward-compatible.** Yes. ``write_markdown_report``'s new
+  parameter is keyword-only with a ``None`` default; existing
+  callers (none in tree) continue to work. ``alloc.diagnostics()``
+  output is additive.

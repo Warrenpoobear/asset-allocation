@@ -144,6 +144,24 @@ def test_cvxportfolio_allocation_engine_preserves_invariants_end_to_end(
         assert abs(float(sub["amount_usd"].sum())) < 1e-6
 
 
+def test_cvxportfolio_allocation_report_contains_calibration_section(
+    with_cvxportfolio_allocation_config,
+):
+    """Cost-aware allocator runs emit a 'Cost-aware allocator calibration
+    (advisory)' section in report.md with the rule-of-thumb suggested
+    λ_norm vs the configured value. Diagnostic only — no behavior change.
+    """
+    pytest.importorskip("cvxpy")
+    result = run_orchestrator(with_cvxportfolio_allocation_config, dry_run=False)
+    report_path = result.output_dir / "report.md"
+    assert report_path.exists()
+    text = report_path.read_text(encoding="utf-8")
+    assert "Cost-aware allocator calibration" in text
+    assert "policy_loss_lambda_norm (used)" in text
+    assert "suggested_policy_loss_lambda_norm" in text
+    assert "ratio used / suggested" in text
+
+
 def test_owl_spending_rule_preserves_invariants_end_to_end(with_owl_spending_config):
     """Phase 3c end-to-end: switching spending.rule to 'owl' with a guardrail
     block must not break any ledger invariant. spend rows are still the

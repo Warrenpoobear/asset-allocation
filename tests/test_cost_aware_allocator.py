@@ -377,6 +377,81 @@ def test_spending_decision_independent_of_allocator_engine():
 # ---- factory smoke -----------------------------------------------------------
 
 
+def test_calibration_history_recorded_per_target_at_call():
+    """Calibration record is appended once per target_at call (after the
+    q0 short-circuit) with the formula
+    ``bps_per_trade × V_total × 1e-3`` and the configured ``λ_norm``.
+    """
+    cfg = _make_cfg({"a": 0.5, "b": 0.5}, policy_loss_lambda_norm=1e5)
+    alloc = CvxportfolioAllocator(cfg)
+    alloc.fit(pd.DataFrame(), CMA(), Constraints())
+    params = _params(cfg)
+    L = _empty_ledger(params.start_quarter, ["a", "b"])
+    current = pd.Series({"a": 700_000.0, "b": 300_000.0})
+
+    # q0 short-circuits — no record.
+    alloc.target_at(L, params, params.start_quarter, current, CostModel(0.0))
+    diag = alloc.diagnostics()
+    assert diag["calibration_summary"]["n_quarters"] == 0
+
+    # q1 with bps>0 — record present.
+    alloc.target_at(L, params, _q("2026Q2"), current, CostModel(100.0))
+    # q2 with bps=0 (zero-cost short-circuit still records V_total
+    # because the calibration record is taken before the cost branch).
+    alloc.target_at(L, params, _q("2026Q3"), current, CostModel(0.0))
+
+    diag = alloc.diagnostics()
+    hist = diag["calibration_history"]
+    assert len(hist) == 2
+    rec = hist[0]
+    assert rec["quarter"] == "2026Q2"
+    assert rec["v_total_usd"] == 1_000_000.0
+    assert rec["bps_per_trade"] == 100.0
+    # formula: bps_per_trade × V_total × 1e-3 = 100 × 1e6 × 1e-3 = 1e5
+    assert rec["suggested_policy_loss_lambda_norm"] == pytest.approx(1.0e5)
+    assert rec["policy_loss_lambda_norm_used"] == 1e5
+    assert rec["ratio_used_over_suggested"] == pytest.approx(1.0)
+
+
+def test_calibration_summary_aggregates_history():
+    cfg = _make_cfg({"a": 0.5, "b": 0.5}, policy_loss_lambda_norm=1e5)
+    alloc = CvxportfolioAllocator(cfg)
+    alloc.fit(pd.DataFrame(), CMA(), Constraints())
+    params = _params(cfg)
+    L = _empty_ledger(params.start_quarter, ["a", "b"])
+    current = pd.Series({"a": 700_000.0, "b": 300_000.0})
+
+    for q in (_q("2026Q2"), _q("2026Q3"), _q("2026Q4")):
+        alloc.target_at(L, params, q, current, CostModel(100.0))
+
+    summary = alloc.diagnostics()["calibration_summary"]
+    assert summary["n_quarters"] == 3
+    assert summary["v_total_usd_median"] == 1_000_000.0
+    assert summary["policy_loss_lambda_norm_used"] == 1e5
+    assert summary["suggested_policy_loss_lambda_norm_median"] == pytest.approx(1.0e5)
+    assert summary["ratio_used_over_suggested_median"] == pytest.approx(1.0)
+
+
+def test_calibration_diagnostics_do_not_alter_target_weights():
+    """Running target_at twice (which appends to calibration_history each
+    time) must produce bit-identical target weights — diagnostics are
+    advisory-only and must not feed back into the optimization.
+    """
+    cfg = _make_cfg({"a": 0.5, "b": 0.5}, policy_loss_lambda_norm=1e5)
+    alloc = CvxportfolioAllocator(cfg)
+    alloc.fit(pd.DataFrame(), CMA(), Constraints())
+    params = _params(cfg)
+    L = _empty_ledger(params.start_quarter, ["a", "b"])
+    current = pd.Series({"a": 700_000.0, "b": 300_000.0})
+
+    t_first = alloc.target_at(L, params, _q("2026Q2"), current, CostModel(100.0))
+    # Sanity: calibration history was extended by the first call.
+    assert len(alloc.diagnostics()["calibration_history"]) == 1
+    t_second = alloc.target_at(L, params, _q("2026Q2"), current, CostModel(100.0))
+    pd.testing.assert_series_equal(t_first, t_second)
+    assert len(alloc.diagnostics()["calibration_history"]) == 2
+
+
 def test_factory_returns_cvxportfolio_allocator():
     cfg = _make_cfg({"a": 0.5, "b": 0.5})
     alloc = make_allocator(cfg, engine="cvxportfolio")

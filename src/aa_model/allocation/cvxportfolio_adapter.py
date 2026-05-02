@@ -83,10 +83,17 @@ class CvxportfolioAllocator(AllocationAdapter):
         self._policy_weights = pd.Series(config.stub_weights, dtype=float).sort_index()
         self._policy_loss_lambda_norm = float(config.policy_loss_lambda_norm)
         self._constraints: Constraints = Constraints()
+        # Phase 4b post-calibration: per-quarter advisory record of the
+        # configured ``λ_norm`` vs the rule-of-thumb suggested value
+        # (``bps × V_total × 1e-3``). Diagnostic only — does NOT influence
+        # the optimization. See MODEL_DOCUMENTATION.md §Phase 4b
+        # calibration note.
+        self._calibration_history: list[dict] = []
         self._diagnostics: dict = {
             "engine": "cvxportfolio",
             "cvxpy_version": self._cvxpy_version,
             "policy_loss_lambda_norm": self._policy_loss_lambda_norm,
+            "suggested_lambda_norm_formula": "bps_per_trade * V_total * 1e-3",
             "solver": "CLARABEL",
             "round_decimals": _ROUND_DECIMALS,
         }
@@ -106,7 +113,49 @@ class CvxportfolioAllocator(AllocationAdapter):
         return self._policy_weights.copy()
 
     def diagnostics(self) -> dict:
-        return dict(self._diagnostics)
+        out = dict(self._diagnostics)
+        out["calibration_history"] = list(self._calibration_history)
+        out["calibration_summary"] = self._calibration_summary()
+        return out
+
+    def _calibration_summary(self) -> dict:
+        """Summary statistics over the per-quarter calibration history.
+
+        Empty / single-bucket NaN-safe. The summary is the diagnostic
+        renderers consume by default; the full per-quarter history stays
+        available for deeper inspection.
+        """
+        if not self._calibration_history:
+            return {
+                "n_quarters": 0,
+                "v_total_usd_median": None,
+                "suggested_policy_loss_lambda_norm_median": None,
+                "policy_loss_lambda_norm_used": self._policy_loss_lambda_norm,
+                "ratio_used_over_suggested_median": None,
+            }
+        v_arr = np.array(
+            [r["v_total_usd"] for r in self._calibration_history], dtype=float
+        )
+        sug_arr = np.array(
+            [r["suggested_policy_loss_lambda_norm"] for r in self._calibration_history],
+            dtype=float,
+        )
+        ratio_vals = [
+            r["ratio_used_over_suggested"]
+            for r in self._calibration_history
+            if r["ratio_used_over_suggested"] is not None
+        ]
+        return {
+            "n_quarters": len(self._calibration_history),
+            "v_total_usd_median": float(np.median(v_arr)),
+            "suggested_policy_loss_lambda_norm_median": float(np.median(sug_arr)),
+            "policy_loss_lambda_norm_used": self._policy_loss_lambda_norm,
+            "ratio_used_over_suggested_median": (
+                float(np.median(np.array(ratio_vals, dtype=float)))
+                if ratio_vals
+                else None
+            ),
+        }
 
     def target_at(
         self,
@@ -131,7 +180,33 @@ class CvxportfolioAllocator(AllocationAdapter):
         if V_total <= 0.0:
             return self._canonicalize(pd.Series(w_policy, index=idx), idx=idx)
 
-        cost_per_dollar = float(cost_model.bps_per_trade) / 1e4
+        # Calibration record (advisory; see MODEL_DOCUMENTATION.md §Phase
+        # 4b). The 2026-05-02 sweep showed that
+        # ``λ_norm ≈ bps_per_trade × V_total × 1e-3`` is the threshold
+        # for engaging interior partial-trade behavior. We store the
+        # ratio of the configured value to that suggestion per quarter
+        # so reports can flag corner-dominated regimes
+        # (``ratio_used_over_suggested ≪ 1``) without altering the
+        # optimization.
+        bps_per_trade = float(cost_model.bps_per_trade)
+        suggested_lambda_norm = bps_per_trade * V_total * 1e-3
+        ratio: float | None
+        if suggested_lambda_norm > 0.0:
+            ratio = self._policy_loss_lambda_norm / suggested_lambda_norm
+        else:
+            ratio = None
+        self._calibration_history.append(
+            {
+                "quarter": str(quarter),
+                "v_total_usd": V_total,
+                "bps_per_trade": bps_per_trade,
+                "policy_loss_lambda_norm_used": self._policy_loss_lambda_norm,
+                "suggested_policy_loss_lambda_norm": suggested_lambda_norm,
+                "ratio_used_over_suggested": ratio,
+            }
+        )
+
+        cost_per_dollar = bps_per_trade / 1e4
 
         # Zero-cost short-circuit. At ``cost_per_dollar == 0`` the L1
         # term vanishes and the strictly-convex policy quadratic has its
