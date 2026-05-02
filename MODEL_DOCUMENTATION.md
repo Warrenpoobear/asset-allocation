@@ -4916,24 +4916,69 @@ FLOW_ORDER: tuple[str, ...] = (
 )
 ```
 
+> **Reviewer tightening 1 — Phase 12.5 does NOT model
+> distributability.** Phase 12.5 is the *consumer-side*
+> infrastructure: it consumes ``distribution_inflow`` rows that an
+> upstream producer has *already classified* as cash distributable
+> to the family-office level. **Phase 12.5 does not determine
+> whether a distribution is legally, tax-wise, or
+> entity-governance-wise distributable to the family office.**
+> Cash sitting at an OpCo, project LLC, restricted trust, or
+> entity with a payout constraint may not be spendable at the
+> household level even if it appears as USD in the operating
+> ledger of that entity. The producer (Phase 13 RE+OpCo pipeline +
+> Phase 14 cash-flow / entity ingestion) owns the upstream
+> classification — applying CRUT mandates, gift-trust restrictions,
+> OpCo retention policy, RE-LLC distribution waterfalls, federal /
+> state tax withholding, etc. — and emits **only the family-office-
+> distributable subset** as ``distribution_inflow`` rows. Phase
+> 12.5 trusts that classification and consumes the rows; it has no
+> opinion about legal / tax / governance distributability of its
+> own.
+
 Sleeve semantics — mirrored on ``external_inflow``:
 
 * ``distribution_inflow`` is **always emitted on the cash bucket** with
   ``amount_usd > 0``. The dollars represent realized cash distributed
-  by an income-producing source (rent collected, OpCo distribution
-  declared, dividend paid, interest received).
+  by an income-producing source AND already classified upstream as
+  family-office-distributable (rent collected and net of LLC retentions,
+  OpCo distribution declared and after entity-tax / governance
+  approval, dividend paid into a household-level account, interest
+  received into household cash).
 * The originating bucket's NAV is **unchanged**. A stabilized RE
   bucket carrying $30M of appraisal value distributes $1M of rent →
   RE bucket stays at $30M (appraisal carry unaffected); cash bucket
   gains $1M; total NAV grows by $1M (real wealth was generated).
-* The ``source`` string identifies the originating asset / entity:
-  ``"re_stabilized:<bucket_or_property>"``,
-  ``"opco:<entity_id>"``,
-  ``"dividend:<bucket>"``,
-  ``"interest:<bucket>"``.
-* Source-string format is **policy guidance, not strict
-  validation** in Phase 12.5; future phases may tighten via a
-  controlled vocabulary once Phase 13's RE+OpCo schema lands.
+* The ``source`` string identifies the originating asset / entity.
+  **Reviewer tightening 2 — recommended canonical convention**:
+
+  ```
+  source = "distribution:<domain>:<entity_or_asset_id>"
+  ```
+
+  Examples:
+
+  ```
+  distribution:real_estate:westplan_woodlawn
+  distribution:opco:liv_holding
+  distribution:portfolio:public_dividends
+  distribution:entity:bft
+  ```
+
+  ``<domain>`` ∈ {``real_estate``, ``opco``, ``portfolio``,
+  ``entity``} for Phase 12.5; future domains may extend the
+  vocabulary. ``<entity_or_asset_id>`` is the producer's stable
+  identifier for the originating asset / entity (e.g., property
+  short-name, OpCo holdco code, portfolio dividend bucket name,
+  entity short-name from the §3.1 entity layer).
+
+  **The convention is documented but NOT enforced in Phase 12.5.**
+  The ledger accepts any non-empty source string. Future Phase
+  13.x may tighten via a controlled vocabulary once the producer
+  layer commits to a stable set of domains and IDs. Recording the
+  convention now lets producers built in Phase 13/14 emit
+  conformant rows from day one.
+
 * ``amount_usd`` must be strictly positive. Negative or zero rows
   fail at ledger-add time (consistent with the existing ``add()``
   validation pattern).
@@ -5300,13 +5345,24 @@ The Phase 12 advisory section gets a third render mode for
     is spending more than it earns; trajectory will erode capital.
   - INFO: years 1-1 used bootstrap (insufficient closed window);
     years 2+ used realized trailing.
+  - **CAVEAT: Phase 12.5 treats every ``distribution_inflow`` row
+    equally. Recurring vs. one-time classification is deferred to
+    the producer layer (Phase 13/14). A high distributable-income
+    base may be overstated if the trailing window is dominated by
+    asset sales, refinancings, special dividends, or one-time
+    entity transfers. The household operator should review the
+    by-source breakdown above against their knowledge of what is
+    recurring before relying on the headline rate.**
 
-_Phase 12.5 / L19 fully resolves the flow-side spending realism
-ticket. Distribution rows must be produced by an upstream feeder
-(cash-flow ingestion + RE/OpCo pipeline land in Phase 13/14); until
-that feeder exists, production runs that select this mode will fail
-the realized-window guard. Use the bootstrap-only path for short
-research runs; otherwise wait for Phase 13._
+_Phase 12.5 / L19 lands the **infrastructure** for flow-side
+spending-base realism — the ledger flow type, base computation,
+and rate-band integration. **Production-grade distributable-income
+realism remains dependent on Phase 13 (RE+OpCo pipeline) and
+Phase 14 (cash-flow / entity ingestion) producers.** Phase 12.5
+does not determine legal / tax / entity-governance distributability;
+it consumes rows already classified upstream as
+family-office-distributable. Use the bootstrap-only path for short
+research runs; otherwise wait for Phase 13/14._
 ```
 
 Warning bands:
@@ -5318,6 +5374,7 @@ Warning bands:
 | ``is_bootstrap`` for any year ≥ ``window_quarters`` | true | STRONG WARNING — realized window expected but not populated; check producer feed |
 | ``len(by_source_usd) == 1`` AND ``base > 0`` | (concentration) | INFO — single-source income concentration |
 | Realized trailing sum drops > 30% YoY | (regime shift) | INFO — yield regime change; verify policy |
+| Always (Phase 12.5 standing caveat) | always | CAVEAT — recurring vs one-time not modeled; trailing sum may be inflated by sales / refis / specials / one-time transfers |
 
 All advisory; none gate Owl's trajectory.
 
@@ -5434,33 +5491,59 @@ End-to-end (1):
 
 ### L19 status under Phase 12.5
 
-Will flip to ``[RESOLVED 2026-XX-XX, Phase 12.5]`` on
-implementation. The resolution wording in the limitations table
-reads exactly:
+> **Reviewer tightening 4 — do not overclaim.** Phase 12.5 lands
+> *infrastructure*: a flow type, a base computation, schema and
+> cross-validation, report diagnostics, and tests. It does **not**
+> land a producer that emits realized ``distribution_inflow`` rows
+> for the SFO. Until Phase 13 (RE+OpCo pipeline) and Phase 14
+> (cash-flow / entity ingestion) commit producers, **the model
+> still cannot actually know the household's distributable income**
+> in a production run; it can only consume rows a future producer
+> will emit. Marking L19 fully RESOLVED on Phase 12.5 alone would
+> overclaim the SFO realism gain.
+
+L19 stays at ``[PARTIALLY RESOLVED]`` after Phase 12.5
+implementation. The limitations-table wording reads exactly:
 
 ```
-L19 — RESOLVED, Phase 12 + Phase 12.5.
-Base-side spending denominator realism (Phase 12, 92c327d) +
-flow-side distributable-income realism (Phase 12.5).
+L19 — PARTIALLY RESOLVED, Phase 12 + Phase 12.5.
+Spending-rule denominator infrastructure complete:
+  base-side (Phase 12, 92c327d) + flow-side (Phase 12.5).
+Production distributable-income realism remains dependent on
+Phase 13 (RE+OpCo pipeline) + Phase 14 (cash-flow / entity
+ingestion) producers.
 ```
+
+Equivalently for short-form references:
+``L19 infrastructure resolved; production-input realism still
+producer-dependent.``
 
 With the explicit notes:
 
-* **Base-side** (Phase 12): four configurable modes against NAV
-  views. Default-off byte-stable.
-* **Flow-side** (Phase 12.5): ``distributable_income`` mode reads
-  realized ``distribution_inflow`` rows over a trailing window.
-  Default-off byte-stable. Pure function preserves Phase 4a
-  contract.
+* **Base-side infrastructure** (Phase 12, shipped): four
+  configurable modes against NAV views. Default-off byte-stable.
+* **Flow-side infrastructure** (Phase 12.5): ``distributable_income``
+  mode reads realized ``distribution_inflow`` rows over a trailing
+  window. Default-off byte-stable. Pure function preserves Phase
+  4a contract. **Phase 12.5 does not determine legal / tax /
+  entity-governance distributability** (reviewer tightening 1) —
+  it consumes upstream-classified rows.
 * **Producer-deferred**: production runs require Phase 13 / 14 to
   emit ``distribution_inflow`` rows. Phase 12.5 ships the seat;
-  the realized base is unusable in production until producers land.
-  Research/synthetic-fixture runs are fully usable in 12.5.
+  the realized base is unusable in production until producers land
+  and the runtime guard fails loudly when used without rows.
+  Research / synthetic-fixture runs are fully usable in 12.5.
+* **L19 flips to RESOLVED only after Phase 13 + Phase 14
+  producers exist and the SFO can run end-to-end on real
+  household income data**. That is the criterion for closing L19
+  in full — not the existence of a flow type and a helper.
 * The standing principle ("NAV is not liquidity / Appraisal value
   is not spending capacity / Development+land value is not
   distributable income / OpCo value is not automatically portfolio
   liquidity") is honored on every spending lane: rebalance side
-  via L8 (Phase 8); spending base side via L19 (Phase 12 + 12.5).
+  via L8 (Phase 8); spending-base infrastructure via L19 (Phase 12
+  + 12.5); spending-base production-input realism remains the open
+  Phase 13/14 work.
 
 ### Locked design choices
 
@@ -5503,8 +5586,23 @@ With the explicit notes:
 * Producer is out of scope: zero ``distribution_inflow`` rows in
   any existing fixture; production runs that select the mode
   without a populated window fail the runtime guard loudly.
-* L19 flips to **RESOLVED** on implementation; the limitation
-  table cleanly reflects both halves closed.
+* L19 stays at **PARTIALLY RESOLVED** after Phase 12.5
+  implementation (reviewer tightening 4). Status text:
+  "spending-rule denominator infrastructure complete; production
+  distributable-income realism remains producer-dependent
+  (Phase 13/14)." L19 flips to RESOLVED only after producers land.
+* Phase 12.5 does NOT determine legal / tax / entity-governance
+  distributability (reviewer tightening 1). The producer is
+  responsible for upstream classification.
+* Recommended source convention (reviewer tightening 2):
+  ``distribution:<domain>:<entity_or_asset_id>`` — documented but
+  not enforced. Examples: ``distribution:real_estate:<asset>``,
+  ``distribution:opco:<entity>``, ``distribution:portfolio:<bucket>``,
+  ``distribution:entity:<entity>``.
+* Recurring-vs-one-time disclaimer (reviewer tightening 3) is
+  rendered as a permanent CAVEAT line in the
+  ``distributable_income`` advisory section so a high base is not
+  silently mistaken for stable recurring yield.
 * Default-off byte-stability for every existing fixture, config,
   and 239-test run.
 * Owl-only — flat_real / smoothing have no rate concept.
