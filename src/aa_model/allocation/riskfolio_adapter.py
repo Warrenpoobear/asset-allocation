@@ -51,10 +51,16 @@ from aa_model.allocation.constraints import Constraints
 from aa_model.assumptions.cma import CMA
 from aa_model.io.schemas import PublicAllocationConfig
 
-# Hard-coded fallback annualized volatilities by bucket. Used only when the
-# caller passes an empty CMA. These are conservative round-number defaults
-# meant to make the optimizer produce sensible weights against the Phase 1
-# fixtures, not realistic CMA values.
+# TEST-ONLY fallback. Reachable only when the caller passes an empty
+# CMA() default-constructed sentinel. **Must not be used by
+# orchestrator-loaded production configs** — those load explicit CMA via
+# configs/cma.yaml (Phase 5; see MODEL_DOCUMENTATION.md §Phase 5 design
+# / decision B and the L4 [RESOLVED] callout). The values are
+# conservative round numbers chosen to keep Phase 1 fixture optimizations
+# sensible, not realistic CMA inputs. **Remove this table (and the
+# fallback branch in `_build_inputs`) once every test path passes an
+# explicit CMA fixture** — at that point the empty-CMA sentinel becomes
+# unreachable and the placeholder lineage closes completely.
 _DEFAULT_VOL_ANNUAL: dict[str, float] = {
     "cash": 0.005,
     "public_bond": 0.04,
