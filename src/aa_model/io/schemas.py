@@ -60,6 +60,14 @@ class PEConfig(BaseModel):
 class RebalanceConfig(BaseModel):
     model_config = _STRICT
     frequency: Literal["quarterly"]
+    # Phase 8 / L8: when true (default), the rebalancer cannot trade
+    # illiquid buckets. PE exposure can only change via pe_call /
+    # pe_distribution / pe_nav_mark; liquid sleeves absorb the
+    # rebalancing burden over the residual liquid NAV. Setting to
+    # false reproduces the pre-L8 PE-tradable behavior; reserved for
+    # internal regression-anchor tests, NOT a recommended user-facing
+    # mode. See MODEL_DOCUMENTATION.md §Phase 8 design.
+    illiquid_overlay: bool = True
 
 
 class HorizonConfig(BaseModel):

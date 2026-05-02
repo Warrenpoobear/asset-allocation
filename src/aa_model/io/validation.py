@@ -103,6 +103,56 @@ def validate_study_config(cfg: StudyConfig) -> None:
             f"sum of pe_* stub_weights ({pe_weight}) != base.pe.sleeve_target_pct ({pe_target})"
         )
 
+    # Phase 8 / L8 illiquidity overlay. When the overlay is on
+    # (default), CMA liquidity tags become an execution input —
+    # promoted from Phase 5's diagnostic-only role. Four cross-config
+    # checks: liquidity covers every allocation bucket; every pe_*
+    # bucket is tagged illiquid; the liquid set (liquid ∪
+    # semi_liquid) is non-empty; aggregate policy weight across the
+    # liquid set is strictly positive (so the renormalisation
+    # w_j / Σ w_L is well-defined).
+    if cfg.base.rebalance.illiquid_overlay:
+        if cfg.cma.liquidity is None:
+            raise ValueError(
+                "base.rebalance.illiquid_overlay=true requires cma.liquidity "
+                "to be present (it is currently absent in cfg.cma)"
+            )
+        liq_buckets = set(cfg.cma.liquidity.keys())
+        missing_liq = stub_buckets - liq_buckets
+        if missing_liq:
+            raise ValueError(
+                "cma.liquidity does not cover every allocation bucket — "
+                f"missing: {sorted(missing_liq)}"
+            )
+        wrong_pe_tags = [
+            b for b in stub_buckets
+            if b.startswith("pe_") and cfg.cma.liquidity.get(b) != "illiquid"
+        ]
+        if wrong_pe_tags:
+            raise ValueError(
+                "every pe_* bucket must be tagged 'illiquid' in cma.liquidity "
+                f"under the L8 overlay — wrong tags: "
+                f"{[(b, cfg.cma.liquidity[b]) for b in sorted(wrong_pe_tags)]}"
+            )
+        liquid_set = {
+            b for b, tag in cfg.cma.liquidity.items()
+            if tag in ("liquid", "semi_liquid") and b in stub_buckets
+        }
+        if not liquid_set:
+            raise ValueError(
+                "L8 overlay requires at least one allocation bucket tagged "
+                "'liquid' or 'semi_liquid'; cma.liquidity has none"
+            )
+        liquid_policy_weight_sum = sum(
+            cfg.allocation.stub_weights.get(b, 0.0) for b in liquid_set
+        )
+        if liquid_policy_weight_sum <= 0.0:
+            raise ValueError(
+                "L8 overlay requires aggregate policy weight across the "
+                f"liquid set to be > 0; got {liquid_policy_weight_sum} "
+                f"across liquid buckets {sorted(liquid_set)}"
+            )
+
     if cfg.base.horizon.start_quarter != cfg.fixture_scenario.horizon.start_quarter:
         raise ValueError(
             "base.horizon.start_quarter != fixture_scenario.horizon.start_quarter "

@@ -20,6 +20,7 @@ from aa_model.integration.ledger import QuarterlyLedger
 from aa_model.io.schemas import StudyConfig
 
 if TYPE_CHECKING:
+    from aa_model.allocation.liquidity_overlay import LiquidityOverlayDiagnostics
     from aa_model.assumptions.cma import CMA
     from aa_model.assumptions.correlation_shock import CorrelationShockDiagnostics
 
@@ -35,6 +36,7 @@ def write_markdown_report(
     allocator_diagnostics: dict | None = None,
     cma: CMA | None = None,
     shock_diagnostics: CorrelationShockDiagnostics | None = None,
+    overlay_history: list[tuple[str, LiquidityOverlayDiagnostics]] | None = None,
 ) -> None:
     end_nav = ledger.end_nav_by_quarter()
     initial_total = sum(ledger.initial_nav.values())
@@ -157,6 +159,83 @@ def write_markdown_report(
         lines.append(
             "- note: CMA baseline preserved; this is a perturbation layer "
             "applied to a copy."
+        )
+        lines.append("")
+
+    # Illiquidity overlay (Phase 8 / L8). Emitted when the overlay is
+    # active and produced at least one per-quarter diagnostic record.
+    # Aggregates: per-illiquid-bucket max drift across the run; total
+    # quarters where any liquid bucket was clipped to zero.
+    if overlay_history:
+        # Aggregate per-illiquid-bucket policy + max drift across the
+        # full horizon. Policy weights are stable across quarters in
+        # current architecture; we just take the value from the first
+        # record.
+        first_diag = overlay_history[0][1]
+        illiquid_buckets = list(first_diag.illiquid_buckets)
+        policy_per = dict(first_diag.policy_weight_per_illiquid)
+        # Find the quarter with max-abs drift per bucket; report the
+        # worst single-quarter snapshot.
+        worst_per_bucket: dict[str, tuple[str, float, float, float]] = {}
+        # tuple = (quarter, current_weight, drift, abs_drift)
+        for q_str, diag in overlay_history:
+            for b in illiquid_buckets:
+                cur_w = diag.current_weight_per_illiquid.get(b, 0.0)
+                d = diag.drift_per_illiquid.get(b, 0.0)
+                ad = abs(d)
+                if b not in worst_per_bucket or ad > worst_per_bucket[b][3]:
+                    worst_per_bucket[b] = (q_str, cur_w, d, ad)
+        total_clipped = sum(
+            d.clipped_to_zero_liquid_count for _q, d in overlay_history
+        )
+
+        lines.append("## Illiquidity overlay")
+        lines.append("")
+        lines.append(
+            f"- illiquid buckets locked: {sorted(illiquid_buckets)}"
+        )
+        lines.append("- per-bucket worst-quarter drift:")
+        lines.append("")
+        lines.append(
+            "| bucket | policy | worst current | drift (current − policy) | quarter |"
+        )
+        lines.append("|---|---:|---:|---:|---|")
+        for b in sorted(illiquid_buckets):
+            q_str, cur_w, d, _ad = worst_per_bucket[b]
+            lines.append(
+                f"| {b} | {policy_per.get(b, 0.0) * 100:.2f}% | "
+                f"{cur_w * 100:.2f}% | {d * 100:+.2f}% | {q_str} |"
+            )
+        lines.append("")
+
+        # Aggregate diagnostics
+        max_overall = max(
+            (
+                d.max_abs_illiquid_drift
+                for _q, d in overlay_history
+            ),
+            default=0.0,
+        )
+        sum_overall_means = (
+            sum(d.sum_abs_illiquid_drift for _q, d in overlay_history)
+            / max(len(overlay_history), 1)
+        )
+        lines.append(
+            f"- max |drift| across all illiquid buckets × quarters: "
+            f"{max_overall * 100:.2f}%"
+        )
+        lines.append(
+            f"- mean Σ|drift| per quarter (across illiquid buckets): "
+            f"{sum_overall_means * 100:.2f}%"
+        )
+        lines.append(
+            f"- total liquid-bucket clipped-to-zero count "
+            f"(execution dollars ≤ $1): {total_clipped}"
+        )
+        lines.append(
+            "- note: PE exposure changes only through pe_call / "
+            "pe_distribution / pe_nav_mark; rebalance trades on illiquid "
+            "buckets are zero by construction (Phase 8 / L8)."
         )
         lines.append("")
 

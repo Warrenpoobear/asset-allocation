@@ -27,6 +27,10 @@ import pandas as pd
 from aa_model.allocation.base import AllocationParams
 from aa_model.allocation.constraints import Constraints
 from aa_model.allocation.factory import make_allocator
+from aa_model.allocation.liquidity_overlay import (
+    LiquidityOverlayDiagnostics,
+    apply_liquidity_overlay,
+)
 from aa_model.assumptions.cma import CMA
 from aa_model.assumptions.correlation_shock import (
     CorrelationShockDiagnostics,
@@ -84,6 +88,7 @@ def run_orchestrator(
         expected_externals,
         allocator_diagnostics,
         cma,
+        overlay_history,
     ) = _build_ledger(cfg, run_id)
     ledger.validate(expected_externals_by_quarter=expected_externals)
 
@@ -106,6 +111,7 @@ def run_orchestrator(
             allocator_diagnostics=allocator_diagnostics,
             cma=cma,
             shock_diagnostics=shock_diagnostics,
+            overlay_history=overlay_history,
         )
         outputs.append("report.md")
         outputs.append("manifest.json")
@@ -133,7 +139,13 @@ def run_orchestrator(
 
 def _build_ledger(
     cfg: StudyConfig, run_id: str
-) -> tuple[QuarterlyLedger, dict[pd.Period, float], dict, CMA]:
+) -> tuple[
+    QuarterlyLedger,
+    dict[pd.Period, float],
+    dict,
+    CMA,
+    list[tuple[str, LiquidityOverlayDiagnostics]],
+]:
     start_q = pd.Period(cfg.base.horizon.start_quarter, freq="Q-DEC")
     n_q = cfg.base.horizon.num_quarters
     initial = {b: float(v) for b, v in cfg.fixture_scenario.nav_initial.items()}
@@ -187,6 +199,7 @@ def _build_ledger(
     )
 
     expected_externals: dict[pd.Period, float] = {}
+    overlay_diagnostics_history: list[tuple[str, LiquidityOverlayDiagnostics]] = []
     ext_inflow_amt = float(cfg.fixture_scenario.external_inflows.default_quarterly_usd)
 
     for i in range(n_q):
@@ -293,10 +306,42 @@ def _build_ledger(
             ledger, alloc_params, q, current_dollars, cost_model
         )
 
+        # 6.6. Phase 8 / L8: illiquidity overlay. Locks every illiquid
+        # bucket at its current dollars and renormalises the liquid
+        # set's policy weights over the residual liquid NAV. Default-on
+        # as a correctness fix; disabled only via the internal
+        # rebalance.illiquid_overlay=false flag for regression-anchor
+        # tests. CMA cross-config validation guarantees the overlay's
+        # preconditions (liquidity covers every allocation bucket; pe_*
+        # are illiquid; liquid set non-empty; aggregate liquid policy
+        # weight > 0).
+        if cfg.base.rebalance.illiquid_overlay:
+            target_weights, overlay_diag = apply_liquidity_overlay(
+                policy_weights=target_weights,
+                current_dollars=current_dollars,
+                liquidity=cma.liquidity,
+            )
+            overlay_diagnostics_history.append((str(q), overlay_diag))
+
         # 7. rebalance to target weights
         total_nav = sum(running_nav.values())
         target_nav = (target_weights * total_nav).reindex(running_nav.keys()).fillna(0.0)
         current_nav = pd.Series(running_nav, dtype=float)
+
+        # Phase 8 / L8: when the overlay is active, pin illiquid bucket
+        # target_nav to current_nav exactly so the load-bearing invariant
+        # ("no rebalance rows on illiquid buckets") holds bit-perfectly.
+        # Without this pin, the round-trip (current_dollars → weight →
+        # target_nav) introduces FP-reconstruction noise of ~1e-9 USD on
+        # illiquid buckets that would emit as tiny rebalance rows. The
+        # overlay computes execution_weights[i] = cur[i]/V_total exactly,
+        # but multiplying back by total_nav can drift if V_total !=
+        # total_nav by FP summation order.
+        if cfg.base.rebalance.illiquid_overlay:
+            for b in cma.liquidity.index:
+                if str(cma.liquidity[b]) == "illiquid" and b in running_nav:
+                    target_nav[b] = running_nav[b]
+
         result = impl.rebalance(current_nav, target_nav, cost_model)
         for bucket, trade in result.trades.items():
             t = float(trade)
@@ -326,7 +371,13 @@ def _build_ledger(
 
         expected_externals[q] = ext_inflow_amt - spend_amt - cost_usd
 
-    return ledger, expected_externals, alloc.diagnostics(), cma
+    return (
+        ledger,
+        expected_externals,
+        alloc.diagnostics(),
+        cma,
+        overlay_diagnostics_history,
+    )
 
 
 def _write_ledger_parquet(df: pd.DataFrame, path: Path) -> None:
