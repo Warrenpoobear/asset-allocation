@@ -46,6 +46,7 @@ def write_markdown_report(
     cma: CMA | None = None,
     shock_diagnostics: CorrelationShockDiagnostics | None = None,
     overlay_history: list[tuple[str, LiquidityOverlayDiagnostics]] | None = None,
+    spending_diagnostics: dict | None = None,
 ) -> None:
     end_nav = ledger.end_nav_by_quarter()
     initial_total = sum(ledger.initial_nav.values())
@@ -665,6 +666,69 @@ def write_markdown_report(
             "quadratic-impact / fee-economics costs are out of scope for "
             "the linear bps model. See MODEL_DOCUMENTATION.md §Phase 10 "
             "/ L14._"
+        )
+        lines.append("")
+
+    # Owl scale-sensitivity (Phase 11 / L16). Gated on rule == "owl"
+    # AND the rule actually fired (which it always does at q0 + each
+    # year boundary, so the second condition is implicit when Owl is
+    # selected and the run has at least one quarter). Surfaces the
+    # absolute-clamp configuration, activation counts, and a regime
+    # classification — plus the **L19 caveat verbatim** so future
+    # readers don't mistake L16 closure for "Owl is family-office
+    # realistic".
+    if (
+        cfg.spending.rule == "owl"
+        and spending_diagnostics is not None
+        and spending_diagnostics.get("engine") == "OwlRule"
+    ):
+        gr = cfg.spending.guardrail
+        min_set = gr is not None and gr.absolute_min_annual_usd is not None
+        max_set = gr is not None and gr.absolute_max_annual_usd is not None
+        min_value = gr.absolute_min_annual_usd if min_set else None
+        max_value = gr.absolute_max_annual_usd if max_set else None
+        min_clamps = int(spending_diagnostics.get("min_clamp_activations", 0))
+        max_clamps = int(spending_diagnostics.get("max_clamp_activations", 0))
+
+        lines.append("## Owl scale-sensitivity (advisory)")
+        lines.append("")
+        lines.append("- absolute guardrail clamps:")
+        if min_set:
+            lines.append(f"  - absolute_min_annual_usd: ${float(min_value):,.0f}")
+        else:
+            lines.append("  - absolute_min_annual_usd: not set")
+        if max_set:
+            lines.append(f"  - absolute_max_annual_usd: ${float(max_value):,.0f}")
+        else:
+            lines.append("  - absolute_max_annual_usd: not set")
+        lines.append("- clamp activations during run:")
+        lines.append(f"  - min-clamp activated: {min_clamps} year-boundary quarters")
+        lines.append(f"  - max-clamp activated: {max_clamps} year-boundary quarters")
+        lines.append("- regime classification:")
+        if min_set or max_set:
+            lines.append(
+                "  - **scale-aware (clamps configured)** — the absolute "
+                "guardrail breaks the rate-based scale-invariance; spending "
+                "trajectories diverge between same-rate-different-NAV "
+                "households at the clamp boundary."
+            )
+        else:
+            lines.append(
+                "  - **scale-invariant (no absolute clamps configured)** — "
+                "Owl's rate-band trigger is scale-invariant under proportional "
+                "setup; a $100M and $1B household with the same initial spend "
+                "rate get identical Owl trajectories. Set "
+                "``absolute_min_annual_usd`` / ``absolute_max_annual_usd`` to "
+                "break the invariance."
+            )
+        lines.append("")
+        lines.append(
+            "_**Phase 11 fixes scale-invariance only — it does NOT resolve "
+            "spending-base realism (L19).** Owl still measures rate against "
+            "**total NAV**, including illiquid private real estate, opco "
+            "equity, development assets, and land. For a Gen3-Gen5 SFO this "
+            "may overstate spending capacity. See MODEL_DOCUMENTATION.md "
+            "§Use-case context + §Phase 11 design + L19._"
         )
         lines.append("")
 

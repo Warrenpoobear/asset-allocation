@@ -78,16 +78,20 @@ queue a separate phase to address it.
   PE buckets are non-tradable in rebalance; only the liquid NAV
   residual rebalances. This is the first place the model honors
   "NAV is not liquidity" structurally.
-* **L19 (NEW, OPEN)** — spending base realism. Current Owl
-  guardrails compute withdrawal rate against **total NAV**, not
-  spendable resources. For Gen3–Gen5 SFOs, total NAV may
-  materially overstate spending capacity. Future work needed.
-* **L16 (Phase 11)** — fixes scale-invariance in Owl, **not**
-  spending-base realism. After Phase 11, Owl is scale-aware (a
-  $100M household and $1B household with the same proportional
-  setup respond differently to drawdowns when an absolute floor
-  is set) but **still measures rate against total NAV**. The
-  spending-base concern is L19 and is explicitly deferred.
+* **L16 (Phase 11 / RESOLVED)** — Owl is scale-aware when the
+  optional ``GuardrailConfig.absolute_min_annual_usd`` /
+  ``absolute_max_annual_usd`` clamps are set. Trajectories
+  diverge between same-rate-different-NAV households at the
+  clamp boundary. Default-off behavior remains the original
+  rate-based Guyton-Klinger semantics, which is scale-invariant
+  by design. **L16 closure does NOT address spending-base
+  realism — Owl still measures rate against total NAV.**
+* **L19 (OPEN)** — spending base realism. Current Owl guardrails
+  compute withdrawal rate against **total NAV**, not spendable
+  resources. For Gen3–Gen5 SFOs, total NAV may materially
+  overstate spending capacity. **Phase 11 / L16 closure did not
+  address this.** Future work: spendable-resource /
+  liquidity-adjusted NAV base for spending rules.
 
 A future contributor reading any spending- or liquidity-related
 phase should treat this section as governing context — not the
@@ -578,7 +582,7 @@ doesn't have to skim eighteen entries to know what's open.
 | L13 | Cvxportfolio adapter has no path dependence | **RESOLVED** | Phase 4b |
 | L14 | Only linear transaction cost is modeled | **PARTIALLY RESOLVED** | Phase 10 (PE-secondary closed by L8; public-bps documented; richer regimes deferred) |
 | L15 | Owl reacts to forecasted NAV, not realized NAV | **RESOLVED** | Phase 4a |
-| L16 | Owl is scale-invariant in initial NAV | **OPEN — modeling** | Future Owl reformulation against absolute spend rate |
+| L16 | Owl is scale-invariant in initial NAV | **RESOLVED** | Phase 11 (optional absolute-dollar clamps in `GuardrailConfig`) |
 | L17 | Cross-engine metric comparability is not meaningful | **ACCEPTED LIMITATION** | Phase 10 consolidation — interpretation problem, not architecture |
 | L18 | Owl misreads inflation shock as "headroom" and raises spending | **RESOLVED** | Phase 4a |
 | L19 | Spending base realism for illiquid SFO balance sheets | **OPEN — modeling** | Future phase (post Phase 11). Owl uses total NAV; SFOs need spendable-resource / liquidity-adjusted base |
@@ -607,31 +611,22 @@ doesn't have to skim eighteen entries to know what's open.
 
 #### Roadmap implications (open entries by priority)
 
-Four entries are genuinely open and worth scoping next:
+After Phase 11 closed L16, three entries are genuinely open and
+worth scoping next:
 
-1. **L16 — Owl scale-invariant in initial NAV.** Owl's trigger
-   condition reduces algebraically to a NAV-cancelling form; a
-   $100M household and a $100B household get identical Owl
-   trajectories at the same spend / inflation / band parameters.
-   This is a real model weakness, not a third-party quirk. Fix
-   path: optional absolute-dollar guardrail clamps in
-   ``GuardrailConfig``, default-off for backward stability;
-   when set, break scale-invariance by introducing dollar-
-   denominated decisions in the trigger output. **Phase 11
-   candidate; design locked separately.**
+1. **L19 — Spending base realism for illiquid SFO balance sheets.**
+   The next-priority modeling fix. Owl currently measures
+   withdrawal rate against **total NAV**. For a Gen3–Gen5 SFO
+   with large private real estate, opco equity, development
+   assets, and land, total NAV may materially overstate
+   spendable capacity. **Phase 11 / L16 closure does NOT address
+   this** — Phase 11 is scale-invariance only. A future phase
+   should introduce a spendable-resource / liquidity-adjusted NAV
+   base for spending rules. Honors the standing "NAV is not
+   liquidity" principle (see top-of-doc §Use-case context).
+   Most directly client-relevant of the open backlog.
 
-2. **L19 — Spending base realism for illiquid SFO balance sheets.**
-   New entry (post Phase 11 design discussion). Owl currently
-   measures withdrawal rate against **total NAV**. For a
-   Gen3–Gen5 SFO with large private real estate, opco equity,
-   development assets, and land, total NAV may materially
-   overstate spendable capacity. **Phase 11 / L16 fix does NOT
-   address this.** A future phase should introduce a
-   spendable-resource / liquidity-adjusted NAV base for spending
-   rules. Honors the standing "NAV is not liquidity" principle
-   (see top-of-doc §Use-case context).
-
-3. **L2 — Returns are NAV-dependent, not regime-dependent.**
+2. **L2 — Returns are NAV-dependent, not regime-dependent.**
    Scenario perturbations change *levels* but not *dynamics* —
    no autocorrelation, no volatility clustering, no drawdown
    contagion. Resolving requires a Monte Carlo path generator
@@ -641,7 +636,7 @@ Four entries are genuinely open and worth scoping next:
    landed deterministic-first. **Now unblocked structurally;
    when the project commits to Monte Carlo, L2 is the gate.**
 
-4. **L5 — `source` as PE-leg pairing key is fragile.** Currently
+3. **L5 — `source` as PE-leg pairing key is fragile.** Currently
    adequate (one row per leg per fund per quarter; Phase 9's
    globally-unique `name` rule lifts the implicit invariant).
    Becomes binding when recommitment logic, secondary-purchase
@@ -662,8 +657,9 @@ them as backlog.
   Per-entry detail in the entries below now carries the matching
   status callout.
 * No code changes; doc-only.
-* Sets up the next phase as a model-weakness fix (L16 candidate),
-  not yet another structural realism layer.
+* Set up the next phase as a model-weakness fix (L16 — now
+  RESOLVED in Phase 11), not yet another structural realism
+  layer. Post-Phase-11, the open backlog is L19 / L2 / L5.
 
 ---
 
@@ -1282,7 +1278,40 @@ The original Phase 3c text follows for audit-trail purposes:
   stub's pre-aligned 50/20/5/25 target avoids. Documented as a
   cross-engine effect, not a separate limitation.
 
-### L16 — Owl is scale-invariant in initial NAV
+### L16 — Owl is scale-invariant in initial NAV — [RESOLVED 2026-05-02, Phase 11]
+
+> **Status: RESOLVED in Phase 11.** ``GuardrailConfig`` gained
+> optional ``absolute_min_annual_usd`` / ``absolute_max_annual_usd``
+> fields. Default ``None`` preserves byte-stable behavior (Owl
+> remains scale-invariant under proportional setup, which is the
+> correct default for users who explicitly want rate-based
+> Guyton-Klinger semantics). When set, the absolute clamps break
+> the rate-based scale-invariance by introducing dollar-denominated
+> decisions in the trigger output. Trajectories diverge between
+> same-rate-different-NAV households at the clamp boundary — pinned
+> by ``test_owl_diverges_under_absolute_floor``.
+>
+> Phase 11 also added the regression test that the original L16
+> entry referenced but didn't actually ship:
+> ``test_owl_path_is_scale_invariant_in_initial_nav`` in
+> ``tests/test_owl_scale_invariance.py``. The doc reference is now
+> accurate.
+>
+> A new ``## Owl scale-sensitivity (advisory)`` report section
+> classifies each Owl run as scale-aware (clamps configured) or
+> scale-invariant (no clamps configured), and surfaces clamp
+> activation counts.
+>
+> **Important: Phase 11 / L16 closure does NOT address L19.** Owl
+> still measures rate against **total NAV**. For a Gen3-Gen5 SFO
+> with large illiquid private real estate, opco equity, development
+> assets, and land, total NAV may overstate spendable capacity.
+> L19 (OPEN) tracks the spending-base realism concern; the
+> top-of-doc §Use-case context section codifies the standing
+> "NAV is not liquidity" principle that future spending- and
+> liquidity-related phases must honor.
+>
+> The original Phase 3c text follows for audit-trail purposes.
 
 * **Model behavior.** Doubling `initial_nav_total` produces an
   **identical** Owl spending series. The trigger condition
@@ -5831,3 +5860,82 @@ future spending- and liquidity-related modeling work.
   to ``None``).
 
 * **Backward-compatible.** Yes (design only).
+
+### 2026-05-02 — Phase 11 implementation: L16 Owl scale-invariance fix
+
+* **What.** Implements the §Phase 11 design locked one commit prior.
+  Three surfaces:
+  1. **Schema** (`io/schemas.py`). ``GuardrailConfig`` gains optional
+     ``absolute_min_annual_usd`` (``ge=0``) and
+     ``absolute_max_annual_usd`` (``gt=0``). New ``field_validator``
+     rejects non-finite values explicitly (pydantic's ``ge`` / ``gt``
+     admit ``inf``, which would silently disable the clamp). New
+     ``model_validator`` enforces ``min ≤ max`` when both are set.
+  2. **OwlRule** (`spending/owl_adapter.py`). Per-quarter recursion
+     adds the absolute clamps after the rate-band trigger and before
+     the existing quarterly floor/ceiling:
+       1. inflation-adjust prior annual
+       2. rate-band trigger (UNCHANGED)
+       3. **NEW: absolute_min / absolute_max clamps**
+       4. quarterly conversion + cfg.floor_usd / cfg.ceiling_usd
+          (UNCHANGED)
+     Rule retains per-instance ``_min_clamp_activations`` /
+     ``_max_clamp_activations`` counters that reset on each new
+     ``params.start_quarter`` (a fresh run); diagnostic only — does
+     NOT influence the trigger output. New ``OwlRule.diagnostics()``
+     surfaces these counts.
+  3. **Report** (`integration/report.py`). New
+     ``## Owl scale-sensitivity (advisory)`` section gated on
+     ``cfg.spending.rule == "owl"``. Surfaces the absolute-clamp
+     configuration, activation counts, and a regime classification
+     (``scale-aware (clamps configured)`` vs.
+     ``scale-invariant (no absolute clamps configured)``). Ends with
+     the **L19 caveat verbatim**:
+     "Phase 11 fixes scale-invariance only — it does NOT resolve
+     spending-base realism (L19). Owl still measures rate against
+     total NAV." Pinned by
+     ``test_report_owl_advisory_section_renders_with_l19_caveat``.
+* **Required tightening verified.** The phrase
+  "Phase 11 fixes scale-invariance only — it does NOT resolve
+  spending-base realism (L19)" appears verbatim in both
+  ``MODEL_DOCUMENTATION.md`` (this file) and the report's advisory
+  section, and is asserted by a regression test.
+* **L-status.** L16 flipped to ``[RESOLVED 2026-05-02, Phase 11]``.
+  L19 remains ``OPEN — modeling``. After Phase 11, the open
+  backlog is **L19 / L2 / L5** in priority order.
+* **Tests added (9).** ``tests/test_owl_scale_invariance.py``:
+  - schema (4): negative min, zero max, non-finite max, min > max
+  - default-off byte-stability (no absolute fields → trajectory
+    byte-identical across two consecutive runs)
+  - **scale-invariance regression test** — the one L16 doc
+    referenced but didn't actually ship before Phase 11. Now
+    pinned: $100M and $1B households with proportional setup
+    produce trajectories that scale exactly 10× at every quarter.
+  - scale-divergence under absolute floor: same two scaled
+    instances with absolute floor set → small fund pins at floor;
+    large fund's clamp never activates; trajectory ratios diverge
+    from the constant-10× pre-clamp shape.
+  - cut-path floor binding via prior-spend feedback: cut sequence
+    drives below floor → clamp activates → next year's
+    ``prior_annual`` reads the clamped value (via the orchestrator-
+    emitted spend rows in the test ledger) → trajectory pins at
+    floor for the rest of the horizon.
+  - end-to-end report renders with the L19 caveat verbatim.
+* **Standing principle (§Use-case context) updated.** L16 entry in
+  the principle's status block flipped from "Phase 11 candidate"
+  to "Phase 11 / RESOLVED" with the engine-conditional wording.
+  The L19 entry in that block remains the spending-base-realism
+  ticket; the principle states explicitly that Phase 11 closure
+  does NOT address it.
+* **Impact on outputs.** **Zero on shipped configs.** The default
+  ``configs/spending.yaml`` uses ``rule: flat_real`` so the new
+  Owl-only fields and report section never fire. For out-of-tree
+  Owl configs without the absolute clamps set, behavior is
+  byte-identical to pre-Phase-11. For Owl configs WITH the
+  clamps set, trajectory diverges from pre-Phase-11 (the clamps
+  bind) — this is the intended fix.
+* **225 tests pass** (was 216). 9 new; zero regressions; zero
+  re-anchored.
+* **Backward-compatible.** Yes. New fields default to ``None`` so
+  existing Owl configs validate and run unchanged. No allocator,
+  rebalancer, ledger, PE, or fee-economics code touched.

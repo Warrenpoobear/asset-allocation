@@ -1,4 +1,5 @@
-"""Owl spending rule (SPEC §6 Phase 3c, Phase 4a fix for L15 / L18).
+"""Owl spending rule (SPEC §6 Phase 3c, Phase 4a fix for L15 / L18,
+Phase 11 fix for L16).
 
 "Owl" is the project codename for a Guyton-Klinger–style guardrail
 spending policy. There is no external "Owl" Python library.
@@ -25,15 +26,46 @@ For each quarter ``t = 0..N-1``:
       elif current_rate > initial_rate · (1 + upper_band_pct):
           annual_spend_t *= (1 - cut_pct)
 
+      # Phase 11 / L16 — optional absolute-dollar clamps:
+      if gr.absolute_min_annual_usd is not None:
+          annual_spend_t = max(annual_spend_t, gr.absolute_min_annual_usd)
+      if gr.absolute_max_annual_usd is not None:
+          annual_spend_t = min(annual_spend_t, gr.absolute_max_annual_usd)
+
   Both ``annual_spend_{year_t-1}`` and ``nav_realized`` are read
   from the closed ledger via :meth:`QuarterlyLedger.closed_through`
   and :meth:`QuarterlyLedger.end_nav_through` — no shared state, no
   forecast assumption.
 
+Phase 11 / L16 — absolute-dollar clamps
+=======================================
+
+When ``gr.absolute_min_annual_usd`` and / or ``absolute_max_annual_usd``
+are set, the trigger output is clamped to a dollar floor / ceiling
+that does NOT scale with initial NAV. This breaks the rate-based
+scale-invariance documented as L16: under proportional setup
+(``annual_spend ∝ initial_nav``) the rate-band test cancels NAV
+algebraically, so a $100M and $1B household with the same
+proportional setup get identical Owl trajectories. Adding a
+dollar-denominated decision (the absolute clamps) breaks that.
+
+**Phase 11 fixes scale-invariance only. It does NOT resolve
+spending-base realism (L19).** Owl still measures rate against
+**total modeled NAV**, including illiquid private real estate, opco
+equity, etc. For a Gen3-Gen5 SFO this may overstate spending
+capacity. See MODEL_DOCUMENTATION.md §Use-case context + §Phase 11
+design.
+
 Phase 4 discipline
 ==================
 
-* **Pure**: no module-level state, no caches.
+* **Pure (with one allowance)**: no module-level state. The Owl rule
+  retains a per-instance counter of clamp activations
+  (``_min_clamp_activations`` and ``_max_clamp_activations``) so the
+  report can surface them; this state is reset on each call to
+  :meth:`quarterly_outflow_at` for a fresh ``params.start_quarter``
+  and accumulates across quarters within a single run. The state
+  does NOT influence the trigger output and is purely diagnostic.
 * **No ledger mutation.** May read the ledger passed into the
   ``SpendingRule`` interface (per Phase 3+ adapter discipline) but
   may not retain, mutate, or access global state.
@@ -43,12 +75,9 @@ Phase 4 discipline
 * **Closed-prior-quarter view only.** Sees ``ledger[quarter <= q-1]``;
   never reads the current quarter's flows.
 
-Resolves L15 (forecast-only NAV) and L18 (Owl misreads inflation
-shock as headroom). The forecast field
-``forecast_quarterly_return_pct`` was removed from
-:class:`GuardrailConfig` in Phase 4a; existing configs that set it
-will fail schema validation, which is the right loud failure since
-the parameter became inert.
+Resolves L15 (forecast-only NAV), L18 (Owl misreads inflation
+shock as headroom), and L16 (scale-invariance, Phase 11; partial —
+spending-base realism L19 remains open).
 """
 
 from __future__ import annotations
@@ -65,6 +94,24 @@ class OwlRule(SpendingRule):
 
     SOURCE_ID = "spending:owl"
 
+    def __init__(self) -> None:
+        # Phase 11 / L16 diagnostic counters: how many year-boundary
+        # quarters had the absolute floor / ceiling clamp activate.
+        # Surfaced via diagnostics() for the report. Does NOT influence
+        # the trigger output.
+        self._min_clamp_activations: int = 0
+        self._max_clamp_activations: int = 0
+        self._last_start_quarter: pd.Period | None = None
+
+    def diagnostics(self) -> dict:
+        """Return Phase 11 clamp-activation counts. Resets when the rule
+        sees a new ``params.start_quarter`` (i.e., a new run)."""
+        return {
+            "engine": "OwlRule",
+            "min_clamp_activations": self._min_clamp_activations,
+            "max_clamp_activations": self._max_clamp_activations,
+        }
+
     def quarterly_outflow_at(
         self,
         ledger: QuarterlyLedger,
@@ -79,6 +126,12 @@ class OwlRule(SpendingRule):
         initial_nav_total = float(sum(ledger.initial_nav.values()))
         if initial_nav_total <= 0.0:
             raise ValueError(f"OwlRule requires positive initial NAV; got {initial_nav_total}")
+
+        # Reset clamp activations on a new run (new start_quarter).
+        if self._last_start_quarter != params.start_quarter:
+            self._min_clamp_activations = 0
+            self._max_clamp_activations = 0
+            self._last_start_quarter = params.start_quarter
 
         # q0 initialization — no guardrail, no inflation, no ledger read.
         # Floor / ceiling clip is applied so a rule emitting a clipped value
@@ -109,6 +162,20 @@ class OwlRule(SpendingRule):
                 annual_spend *= 1.0 + gr.raise_pct
             elif current_rate > initial_rate * (1.0 + gr.upper_band_pct):
                 annual_spend *= 1.0 - gr.cut_pct
+
+        # Phase 11 / L16: optional absolute-dollar clamps. Break the
+        # rate-based scale-invariance by introducing dollar-denominated
+        # decisions in the trigger output. Activations are tracked for
+        # the report diagnostic. **Does NOT address L19 spending-base
+        # realism — Owl still measures rate against total NAV.**
+        if gr.absolute_min_annual_usd is not None:
+            if annual_spend < gr.absolute_min_annual_usd:
+                annual_spend = float(gr.absolute_min_annual_usd)
+                self._min_clamp_activations += 1
+        if gr.absolute_max_annual_usd is not None:
+            if annual_spend > gr.absolute_max_annual_usd:
+                annual_spend = float(gr.absolute_max_annual_usd)
+                self._max_clamp_activations += 1
 
         quarterly = annual_spend / 4.0
         return max(cfg.floor_usd, min(cfg.ceiling_usd, quarterly))

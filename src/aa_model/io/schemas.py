@@ -447,6 +447,45 @@ class GuardrailConfig(BaseModel):
     lower_band_pct: float = Field(gt=0.0)  # raise trigger
     raise_pct: float = Field(gt=0.0)
     cut_pct: float = Field(gt=0.0, lt=1.0)  # cut < 100% (cannot zero out spending)
+    # Phase 11 / L16: optional absolute-dollar guardrail clamps.
+    # Default None preserves the existing rate-band-only behavior
+    # (which is scale-invariant under proportional setup, per L16).
+    # When set, break scale-invariance by clamping the trigger output
+    # to a dollar floor / ceiling that does NOT scale with initial NAV.
+    # Static — not inflation-adjusted; users wanting inflation-indexed
+    # bands set them externally as a policy choice. Owl-only.
+    #
+    # IMPORTANT: Phase 11 fixes scale-invariance only. It does NOT
+    # resolve spending-base realism (L19). Owl still measures rate
+    # against total NAV — see MODEL_DOCUMENTATION.md §Use-case context
+    # + §Phase 11 design.
+    absolute_min_annual_usd: float | None = Field(default=None, ge=0.0)
+    absolute_max_annual_usd: float | None = Field(default=None, gt=0.0)
+
+    @field_validator("absolute_min_annual_usd", "absolute_max_annual_usd")
+    @classmethod
+    def _absolute_clamp_finite(cls, v: float | None) -> float | None:
+        # pydantic's ``ge`` / ``gt`` admit ``inf``; reject explicitly so a
+        # user mistake (e.g., ``float("inf")``) fails loudly rather than
+        # disabling the clamp by trivial bound.
+        if v is None:
+            return v
+        if not math.isfinite(v):
+            raise ValueError(f"absolute clamp value must be finite; got {v!r}")
+        return v
+
+    @model_validator(mode="after")
+    def _absolute_band_bounds_well_formed(self) -> GuardrailConfig:
+        if (
+            self.absolute_min_annual_usd is not None
+            and self.absolute_max_annual_usd is not None
+            and self.absolute_min_annual_usd > self.absolute_max_annual_usd
+        ):
+            raise ValueError(
+                f"absolute_min_annual_usd ({self.absolute_min_annual_usd}) > "
+                f"absolute_max_annual_usd ({self.absolute_max_annual_usd})"
+            )
+        return self
 
 
 class SpendingConfig(BaseModel):

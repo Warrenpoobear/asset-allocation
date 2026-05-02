@@ -89,6 +89,7 @@ def run_orchestrator(
         allocator_diagnostics,
         cma,
         overlay_history,
+        spending_diagnostics,
     ) = _build_ledger(cfg, run_id)
     ledger.validate(expected_externals_by_quarter=expected_externals)
 
@@ -112,6 +113,7 @@ def run_orchestrator(
             cma=cma,
             shock_diagnostics=shock_diagnostics,
             overlay_history=overlay_history,
+            spending_diagnostics=spending_diagnostics,
         )
         outputs.append("report.md")
         outputs.append("manifest.json")
@@ -145,6 +147,7 @@ def _build_ledger(
     dict,
     CMA,
     list[tuple[str, LiquidityOverlayDiagnostics]],
+    dict | None,
 ]:
     start_q = pd.Period(cfg.base.horizon.start_quarter, freq="Q-DEC")
     n_q = cfg.base.horizon.num_quarters
@@ -380,12 +383,21 @@ def _build_ledger(
 
         expected_externals[q] = ext_inflow_amt - spend_amt - cost_usd
 
+    # Phase 11 / L16: surface the spending rule's diagnostics if it
+    # exposes any (currently only OwlRule does; flat_real / smoothing
+    # have no per-quarter diagnostics worth reporting).
+    spending_diagnostics: dict | None = None
+    diag_method = getattr(rule, "diagnostics", None)
+    if callable(diag_method):
+        spending_diagnostics = diag_method()
+
     return (
         ledger,
         expected_externals,
         alloc.diagnostics(),
         cma,
         overlay_diagnostics_history,
+        spending_diagnostics,
     )
 
 
