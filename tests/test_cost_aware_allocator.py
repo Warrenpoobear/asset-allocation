@@ -90,6 +90,30 @@ def test_zero_cost_parity_stub_returns_policy_unchanged():
     pd.testing.assert_series_equal(target_q1.sort_index(), alloc.weights().sort_index())
 
 
+def test_zero_cost_parity_holds_at_realistic_nav_and_low_lambda():
+    """Regression for the 2026-05-02 calibration sweep finding: at
+    ``V_total = $100M`` and small ``λ_norm`` (e.g. 0.01), CLARABEL's
+    default tolerance stops short of tight policy convergence on the
+    weakly-conditioned policy quadratic. The adapter must short-circuit
+    ``cost_per_dollar == 0`` so zero-cost parity holds across every
+    realistic NAV scale and every ``λ_norm > 0``.
+    """
+    for lam in (0.01, 0.1, 1.0, 10.0):
+        cfg = _make_cfg({"a": 0.5, "b": 0.5}, policy_loss_lambda_norm=lam)
+        alloc = CvxportfolioAllocator(cfg)
+        alloc.fit(pd.DataFrame(), CMA(), Constraints())
+        params = _params(cfg)
+        L = _empty_ledger(params.start_quarter, ["a", "b"])
+        # Far-from-policy current at $100M.
+        current = pd.Series({"a": 60_000_000.0, "b": 40_000_000.0})
+        target = alloc.target_at(L, params, _q("2026Q2"), current, CostModel(0.0))
+        expected = pd.Series({"a": 0.5, "b": 0.5})
+        diff = (target - expected).abs().max()
+        assert diff < 1e-12, (
+            f"zero-cost parity broken at λ_norm={lam}: target={target.to_dict()}"
+        )
+
+
 def test_zero_cost_parity_cvxportfolio_returns_policy():
     cfg = _make_cfg({"cash": 0.5, "equity": 0.5})
     alloc = CvxportfolioAllocator(cfg)

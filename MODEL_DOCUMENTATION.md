@@ -1339,14 +1339,37 @@ with:
   divisor cancel mathematically, so the user-facing ``λ_norm`` is
   scale-invariant in the policy term (at the same fractional weight
   deviation, the policy-loss intensity is identical regardless of
-  NAV). Note that the **threshold at which partial-trade behavior
-  engages** still scales with ``V_total / λ_norm`` because the L1 cost
-  term is linear in dollars; the normalization fixes the policy
-  term's units, not the policy/cost balance. Calibrate by tuning
-  ``λ_norm`` empirically against the desired
-  partial-trade-vs-policy-track behavior at the portfolio's
-  representative scale. See the §Phase 4b — normalized λ migration
-  note below.
+  NAV). The **threshold at which partial-trade behavior engages**
+  still scales with ``V_total / λ_norm`` because the L1 cost term is
+  linear in dollars; the normalization fixes the policy term's units,
+  not the policy/cost balance.
+
+  > **Calibration note (2026-05-02 sweep, see
+  > `docs/sweep_lambda_calibration_2026_05_02.md`):** the default
+  > ``λ_norm = 1.0`` is **corner-dominated** at institutional NAV
+  > scales. At V_total = $100M with bps ≥ 5, the cost-aware optimum
+  > is bit-identical across ``λ_norm ∈ [0.01, 1e3]`` — the policy
+  > gradient is too weak relative to the L1 cost term for interior
+  > partial-trade behavior to engage. Sensitivity becomes visible
+  > only at ``λ_norm ≈ 1e6`` and above for $100M / 5 bps.
+  >
+  > Rough rule of thumb for engaging interior partial-trade behavior:
+  >
+  > ```
+  > λ_norm ≈ bps_per_trade × V_total × 1e-3
+  > ```
+  >
+  > (e.g. ``λ_norm ≈ 5e5`` at $100M / 5 bps; ``λ_norm ≈ 1e8`` at
+  > $100M / 100 bps). The default ``1.0`` is intentionally
+  > conservative — it produces effectively cost-aware-OFF behavior
+  > at institutional scales (the optimizer suppresses over-trading
+  > but does not weight policy deviation against cost in a tunable
+  > way). This is documented behavior, not a bug; calibrate empirically
+  > against the desired policy-track-vs-cost-suppress balance for
+  > the target portfolio.
+
+  See also the §Phase 4b — normalized λ migration note in the change
+  log.
 
 **Why dollar-quadratic policy deviation, not weight-quadratic.** Both
 terms are now in dollars (policy in dollars², cost in dollars). λ has
@@ -2477,3 +2500,59 @@ what changed, why, impact on outputs, backward-compatibility flag.
   `extra="forbid"` will fail validation on the old field name. This
   is the same loud-failure pattern Phase 4a used when removing
   `forecast_quarterly_return_pct`. 121 tests pass.
+
+### 2026-05-02 — Phase 4b — λ calibration sweep + zero-cost-parity fix
+
+* **What.** Research probe (`scripts/sweep_lambda_calibration.py`) +
+  generated report (`docs/sweep_lambda_calibration_2026_05_02.md`)
+  iterating the cross-product
+  ``λ_norm ∈ {0.01, 0.1, 1.0, 10.0, 1e3, 1e6}`` × ``bps ∈ {0, 5, 25,
+  100}`` × ``scenario ∈ {base, public_drawdown, inflation_shock}`` =
+  72 cells. Two material outputs:
+  1. **Bug fix in `CvxportfolioAllocator.target_at`.** The sweep's
+     bps=0 column surfaced 3–5pp policy deviation at small
+     ``λ_norm`` (0.01, 0.1) at V_total = $100M — CLARABEL's default
+     tolerance stops short of tight policy convergence on the
+     weakly-conditioned policy quadratic (``λ_eff = λ_norm /
+     V_total² = 1e-18`` for ``λ_norm = 0.01`` at $100M). Fix:
+     short-circuit ``cost_per_dollar == 0`` to return policy
+     directly; mathematically equivalent (the L1 term vanishes and
+     the strictly-convex policy quadratic has its unique global
+     minimum at policy). Regression test added in
+     `tests/test_cost_aware_allocator.py`
+     (`test_zero_cost_parity_holds_at_realistic_nav_and_low_lambda`)
+     covering all four ``λ_norm`` values from the sweep at V = $100M.
+     **122 tests pass** (was 121).
+  2. **Calibration interpretation note in MODEL_DOCUMENTATION.md
+     §Phase 4b design.** At V_total = $100M with realistic
+     transaction costs (bps ≥ 5), the cost-aware optimum is
+     **corner-dominated** across ``λ_norm ∈ [0.01, 1e3]`` — total
+     turnover and cumulative tx cost are bit-identical across this
+     entire range at any given bps>0. Sensitivity becomes visible
+     only at ``λ_norm ≈ 1e6`` for $100M / 5 bps — six orders of
+     magnitude above the schema default ``λ_norm = 1.0``.
+     Rule-of-thumb scaling for engaging interior partial-trade
+     behavior: ``λ_norm ≈ bps × V_total × 1e-3``. This is
+     documented behavior of the dollar-quadratic + linear-cost
+     formulation, not a bug; the default is intentionally
+     conservative and produces effectively cost-aware-OFF behavior
+     at institutional scales.
+* **Why.** Per audit verdict on the 4b ship, calibrate before adding
+  realism layers (CMA / STAIRS / PE). The sweep both validated that
+  the engine is structurally correct (no failures, no invariant
+  violations across 72 cells) and surfaced an interpretation risk
+  worth pinning in the doc — the user-facing default does not engage
+  cost/policy trade-off reasoning at typical institutional NAV
+  scales. The bps=0 numerical bug was a side-effect of the same
+  underlying fact: at small ``λ_eff``, the solver's optimality gap
+  no longer constrains the decision space tightly.
+* **Impact on outputs.** Zero for shipped configs (all
+  ``engine=stub``). For ``engine=cvxportfolio`` users with
+  ``bps_per_trade=0``, output is **changed**: now exactly equals
+  policy. Previously could deviate up to ~5pp at small ``λ_norm`` at
+  $100M-scale portfolios (the bug). For ``engine=cvxportfolio``
+  users with ``bps_per_trade>0``, no behavior change — the
+  short-circuit is gated on ``cost_per_dollar == 0``.
+* **Backward-compatible.** Yes for non-buggy paths; the bps=0
+  output change at small ``λ_norm`` is the bug fix itself (zero-cost
+  parity now holds where it didn't).

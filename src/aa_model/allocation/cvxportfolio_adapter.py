@@ -132,6 +132,22 @@ class CvxportfolioAllocator(AllocationAdapter):
             return self._canonicalize(pd.Series(w_policy, index=idx), idx=idx)
 
         cost_per_dollar = float(cost_model.bps_per_trade) / 1e4
+
+        # Zero-cost short-circuit. At ``cost_per_dollar == 0`` the L1
+        # term vanishes and the strictly-convex policy quadratic has its
+        # unique global minimum at ``w = w_policy`` (subject to
+        # constraints). Skipping the solver here is mathematically
+        # equivalent and avoids an ill-conditioning pitfall: at small
+        # ``λ_norm`` against a large ``V_total`` (e.g. $100M+ portfolios
+        # with ``λ_norm ≤ 0.1``), ``λ_eff = λ_norm / V_total²`` is small
+        # enough that CLARABEL's default tolerance can stop short of
+        # tight policy convergence — the calibration sweep on
+        # 2026-05-02 surfaced 3–5pp policy deviation in this regime
+        # despite cost being exactly zero. Short-circuit pins zero-cost
+        # parity across every ``λ_norm > 0`` and every NAV scale.
+        if cost_per_dollar == 0.0:
+            return self._canonicalize(pd.Series(w_policy, index=idx), idx=idx)
+
         n = len(idx)
 
         import cvxpy as cp
