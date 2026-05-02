@@ -498,12 +498,53 @@ class TADefaultsConfig(BaseModel):
         return self
 
 
+_STRATEGY_TO_SLEEVE: dict[str, str] = {
+    "buyout": "pe_buyout",
+    "venture": "pe_venture",
+    "growth": "pe_growth",
+    "credit": "pe_credit",
+    "real_estate": "pe_re",
+    "infra": "pe_infra",
+    # "secondary" is intentionally absent — secondaries are bought as
+    # units of the underlying strategy, so any pe_* sleeve is valid.
+}
+
+
+class _FeeModelConfig(BaseModel):
+    """Phase 9 metadata: fund-level fee economics carried for diagnostic
+    and reporting purposes only. **Not consumed** by the projection math
+    in Phase 9; charging management fees on unfunded commitment and
+    reducing distributions for carried interest are Phase 10+ scope.
+    Schema may evolve when fee economics actually land (loud-failure-
+    friendly breaking change at that point).
+    """
+
+    model_config = _STRICT
+    management_fee_pct: float = Field(default=0.0, ge=0.0, le=0.05)
+    carried_interest_pct: float = Field(default=0.0, ge=0.0, le=0.30)
+    preferred_return_pct: float = Field(default=0.0, ge=0.0, le=0.20)
+
+
 class FundConfig(BaseModel):
     model_config = _STRICT
     name: str
     commitment_usd: float = Field(gt=0.0)
     vintage: str
     sleeve: str
+    # ---- Phase 9 additions, all optional except status ----
+    manager: str | None = None
+    fund_id: str | None = None
+    strategy: Literal[
+        "buyout",
+        "venture",
+        "growth",
+        "credit",
+        "real_estate",
+        "infra",
+        "secondary",
+    ] | None = None
+    fee_model: _FeeModelConfig | None = None
+    status: Literal["active", "committed", "exited", "planned"] = "active"
 
     @field_validator("vintage")
     @classmethod
@@ -511,6 +552,28 @@ class FundConfig(BaseModel):
         if not QUARTER_RE.match(v):
             raise ValueError(f"vintage must match YYYYQN, got {v!r}")
         return v
+
+    @model_validator(mode="after")
+    def _strategy_sleeve_consistent(self) -> FundConfig:
+        # When ``strategy`` is set, it must agree with ``sleeve`` per
+        # the documented mapping. ``secondary`` is the one flexible
+        # case (compatible with any pe_* sleeve).
+        if self.strategy is None:
+            return self
+        if self.strategy == "secondary":
+            if not self.sleeve.startswith("pe_"):
+                raise ValueError(
+                    f"fund {self.name!r}: strategy='secondary' requires a "
+                    f"pe_* sleeve, got sleeve={self.sleeve!r}"
+                )
+            return self
+        expected_sleeve = _STRATEGY_TO_SLEEVE[self.strategy]
+        if self.sleeve != expected_sleeve:
+            raise ValueError(
+                f"fund {self.name!r}: strategy={self.strategy!r} requires "
+                f"sleeve={expected_sleeve!r}, got sleeve={self.sleeve!r}"
+            )
+        return self
 
 
 class _StairsSleeveParams(BaseModel):
@@ -577,6 +640,43 @@ class PEPacingConfig(BaseModel):
     # Phase 7 / STAIRS. Optional at the schema level; required at
     # cross-config validation when base.pe.engine == "stairs".
     stairs_defaults: StairsDefaultsConfig | None = None
+
+    @model_validator(mode="after")
+    def _funds_well_formed(self) -> PEPacingConfig:
+        # Phase 9: globally-unique fund name (load-bearing rule lifted
+        # from unstated convention — the ledger source uses
+        # pacing:<fund_name>, so duplicate names create ambiguous
+        # ledger sources and ambiguous metadata joins).
+        names = [f.name for f in self.funds]
+        if len(names) != len(set(names)):
+            dups = sorted({n for n in names if names.count(n) > 1})
+            raise ValueError(
+                f"pe_pacing.funds: name must be globally unique; "
+                f"duplicates: {dups}"
+            )
+
+        # Phase 9: globally-unique fund_id when set on any fund.
+        ids = [f.fund_id for f in self.funds if f.fund_id is not None]
+        if len(ids) != len(set(ids)):
+            dups = sorted({i for i in ids if ids.count(i) > 1})
+            raise ValueError(
+                f"pe_pacing.funds: fund_id must be globally unique when set; "
+                f"duplicates: {dups}"
+            )
+
+        # Phase 9: (manager, name) uniqueness when manager is set —
+        # redundant with the global name uniqueness rule above (the
+        # tuple is unique whenever name is) but kept as defence-in-
+        # depth; surfaces a clearer error message in the manager-
+        # specific case.
+        mn_pairs = [(f.manager, f.name) for f in self.funds if f.manager is not None]
+        if len(mn_pairs) != len(set(mn_pairs)):
+            dups = sorted({p for p in mn_pairs if mn_pairs.count(p) > 1})
+            raise ValueError(
+                f"pe_pacing.funds: (manager, name) must be unique when "
+                f"manager is set; duplicates: {dups}"
+            )
+        return self
 
 
 # ---- scenarios (Phase 2 placeholder) ---------------------------------------

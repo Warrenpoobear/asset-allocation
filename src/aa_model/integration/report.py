@@ -239,6 +239,263 @@ def write_markdown_report(
         )
         lines.append("")
 
+    # PE program structure (Phase 9). Emitted only when at least one
+    # fund carries any Phase 9 metadata field (manager, fund_id,
+    # strategy, fee_model, or non-default status). Six aggregations
+    # per the design: commitment summary, unfunded, calls /
+    # distributions by manager, vintage concentration, manager
+    # concentration top-3, NAV by manager (end of horizon). When no
+    # Phase 9 fields are set, the section is omitted entirely so the
+    # default fixture run is byte-stable with pre-Phase-9 reports.
+    funds = cfg.pe_pacing.funds
+    has_phase9_metadata = any(
+        (f.manager is not None)
+        or (f.fund_id is not None)
+        or (f.strategy is not None)
+        or (f.fee_model is not None)
+        or (f.status != "active")
+        for f in funds
+    )
+    if has_phase9_metadata:
+        # Skip exited funds in forward-flow diagnostics, per the locked
+        # status semantics. Exited funds also did not enter the
+        # projection (orchestrator filters before adapter dispatch),
+        # so the ledger has no flows for them anyway.
+        forward_funds = [f for f in funds if f.status != "exited"]
+
+        # Build the ledger-side join key set: ledger source for PE
+        # flows is "pacing:<fund_name>" (Phase 9 keeps this verbatim).
+        pe_flow_types = ("pe_call", "pe_distribution", "pe_nav_mark")
+        pe_rows = ledger.finalize()
+        pe_rows = pe_rows[pe_rows["flow_type"].isin(pe_flow_types)].copy()
+        # Strip the "pacing:" prefix to get fund_name → manager.
+        if not pe_rows.empty:
+            pe_rows["fund_name"] = pe_rows["source"].str.removeprefix("pacing:")
+
+        # Manager attribution helpers.
+        def _manager_of(name: str) -> str:
+            for f in forward_funds:
+                if f.name == name and f.manager is not None:
+                    return f.manager
+            return "(unknown)"
+
+        lines.append("## PE program structure")
+        lines.append("")
+
+        # 1. Commitment summary — total commitment by (manager, sleeve).
+        lines.append("### Commitment summary")
+        lines.append("")
+        commit_rows = pd.DataFrame(
+            [
+                {
+                    "manager": f.manager if f.manager is not None else "(unknown)",
+                    "sleeve": f.sleeve,
+                    "commitment_usd": float(f.commitment_usd),
+                }
+                for f in forward_funds
+            ]
+        )
+        if not commit_rows.empty:
+            piv = (
+                commit_rows.groupby(["manager", "sleeve"])["commitment_usd"]
+                .sum()
+                .unstack(fill_value=0.0)
+                .sort_index()
+            )
+            lines.append("| manager | " + " | ".join(piv.columns) + " |")
+            lines.append(
+                "|---" + "|---:" * len(piv.columns) + "|"
+            )
+            for mgr, row in piv.iterrows():
+                cells = [f"${float(v):,.0f}" for v in row]
+                lines.append(f"| {mgr} | " + " | ".join(cells) + " |")
+            lines.append("")
+
+        # 2. Unfunded by manager — commitment minus cumulative calls
+        # over the horizon.
+        lines.append("### Unfunded by manager")
+        lines.append("")
+        # Cumulative calls per fund.
+        if not pe_rows.empty:
+            calls = pe_rows[pe_rows["flow_type"] == "pe_call"].copy()
+            # pe_call has paired rows (positive on sleeve, negative on
+            # cash). Take only the sleeve side — amount > 0.
+            calls = calls[calls["amount_usd"] > 0]
+            calls_per_fund = (
+                calls.groupby("fund_name")["amount_usd"].sum().to_dict()
+            )
+        else:
+            calls_per_fund = {}
+        unfunded_rows: list[dict] = []
+        for f in forward_funds:
+            mgr = f.manager if f.manager is not None else "(unknown)"
+            called = float(calls_per_fund.get(f.name, 0.0))
+            unfunded = max(0.0, float(f.commitment_usd) - called)
+            unfunded_rows.append(
+                {
+                    "manager": mgr,
+                    "commitment_usd": float(f.commitment_usd),
+                    "called_usd": called,
+                    "unfunded_usd": unfunded,
+                }
+            )
+        unfunded_df = pd.DataFrame(unfunded_rows)
+        if not unfunded_df.empty:
+            agg = unfunded_df.groupby("manager")[
+                ["commitment_usd", "called_usd", "unfunded_usd"]
+            ].sum()
+            agg["unfunded_pct"] = (
+                agg["unfunded_usd"] / agg["commitment_usd"].replace(0, float("nan"))
+            ).fillna(0.0) * 100.0
+            lines.append(
+                "| manager | commitment | called | unfunded | unfunded % |"
+            )
+            lines.append("|---|---:|---:|---:|---:|")
+            for mgr, row in agg.sort_index().iterrows():
+                lines.append(
+                    f"| {mgr} | ${float(row['commitment_usd']):,.0f} | "
+                    f"${float(row['called_usd']):,.0f} | "
+                    f"${float(row['unfunded_usd']):,.0f} | "
+                    f"{float(row['unfunded_pct']):.1f}% |"
+                )
+            lines.append("")
+
+        # 3. Cumulative calls + distributions by manager.
+        if not pe_rows.empty:
+            lines.append("### Cumulative calls and distributions by manager")
+            lines.append("")
+            # Sleeve-side (positive) is the "into PE" amount for calls;
+            # for distributions, the sleeve side is negative (PE → cash).
+            calls = pe_rows[pe_rows["flow_type"] == "pe_call"].copy()
+            calls = calls[calls["amount_usd"] > 0]
+            dists = pe_rows[pe_rows["flow_type"] == "pe_distribution"].copy()
+            dists = dists[dists["amount_usd"] < 0]
+            # Use absolute value for distributions for display.
+            dists["amount_usd"] = dists["amount_usd"].abs()
+            calls["manager"] = calls["fund_name"].map(_manager_of)
+            dists["manager"] = dists["fund_name"].map(_manager_of)
+            mgr_calls = calls.groupby("manager")["amount_usd"].sum()
+            mgr_dists = dists.groupby("manager")["amount_usd"].sum()
+            all_managers = sorted(set(mgr_calls.index) | set(mgr_dists.index))
+            lines.append(
+                "| manager | cumulative calls | cumulative distributions |"
+            )
+            lines.append("|---|---:|---:|")
+            for mgr in all_managers:
+                c = float(mgr_calls.get(mgr, 0.0))
+                d = float(mgr_dists.get(mgr, 0.0))
+                lines.append(f"| {mgr} | ${c:,.0f} | ${d:,.0f} |")
+            lines.append("")
+
+        # 4. Vintage concentration — total commitment by vintage year.
+        lines.append("### Vintage concentration")
+        lines.append("")
+        vintage_rows = pd.DataFrame(
+            [
+                {
+                    "vintage_year": f.vintage[:4],
+                    "commitment_usd": float(f.commitment_usd),
+                }
+                for f in forward_funds
+            ]
+        )
+        if not vintage_rows.empty:
+            agg_v = vintage_rows.groupby("vintage_year")["commitment_usd"].sum()
+            total = float(agg_v.sum())
+            lines.append("| vintage year | commitment | share |")
+            lines.append("|---|---:|---:|")
+            for yr, v in agg_v.sort_index().items():
+                share = (float(v) / total * 100.0) if total > 0 else 0.0
+                lines.append(f"| {yr} | ${float(v):,.0f} | {share:.1f}% |")
+            lines.append("")
+
+        # 5. Manager concentration — top-3 by commitment.
+        lines.append("### Manager concentration (top 3)")
+        lines.append("")
+        if not commit_rows.empty:
+            mgr_total = (
+                commit_rows.groupby("manager")["commitment_usd"]
+                .sum()
+                .sort_values(ascending=False)
+            )
+            total = float(mgr_total.sum())
+            lines.append("| rank | manager | commitment | share |")
+            lines.append("|---|---|---:|---:|")
+            for i, (mgr, v) in enumerate(mgr_total.head(3).items(), start=1):
+                share = (float(v) / total * 100.0) if total > 0 else 0.0
+                lines.append(
+                    f"| {i} | {mgr} | ${float(v):,.0f} | {share:.1f}% |"
+                )
+            lines.append("")
+
+        # 6. NAV by manager at end of horizon.
+        lines.append("### NAV by manager (end of horizon)")
+        lines.append("")
+        if not pe_rows.empty:
+            # End-of-horizon NAV per fund: take the last nav_end_usd
+            # row per fund (ledger nav_end_usd is per-bucket cumulative;
+            # we need per-fund, which requires the projection frame —
+            # but we don't have direct access. Instead, approximate by
+            # using the per-fund cumulative net of (calls - distributions
+            # + nav_marks) which equals the projection's nav_end_usd at
+            # the last quarter that fund appeared).
+            last_per_fund = (
+                pe_rows.sort_values(["fund_name", "quarter"])
+                .groupby("fund_name")
+                .agg(
+                    cum_call=(
+                        "amount_usd",
+                        lambda s: float(
+                            pe_rows.loc[s.index][
+                                (pe_rows.loc[s.index]["flow_type"] == "pe_call")
+                                & (pe_rows.loc[s.index]["amount_usd"] > 0)
+                            ]["amount_usd"].sum()
+                        ),
+                    ),
+                )
+            )
+            # Simpler: per fund, cumulative pe_call (positive sleeve
+            # side) - cumulative pe_distribution (positive sleeve
+            # negative → use abs) + cumulative pe_nav_mark =
+            # end-of-horizon NAV.
+            per_fund_nav = {}
+            for fname in pe_rows["fund_name"].unique():
+                sub = pe_rows[pe_rows["fund_name"] == fname]
+                call = float(
+                    sub[(sub["flow_type"] == "pe_call") & (sub["amount_usd"] > 0)][
+                        "amount_usd"
+                    ].sum()
+                )
+                dist = float(
+                    sub[
+                        (sub["flow_type"] == "pe_distribution")
+                        & (sub["amount_usd"] < 0)
+                    ]["amount_usd"].sum()
+                )  # negative
+                mark = float(
+                    sub[sub["flow_type"] == "pe_nav_mark"]["amount_usd"].sum()
+                )
+                per_fund_nav[fname] = call + dist + mark  # dist already negative
+            mgr_nav: dict[str, float] = {}
+            for fname, v in per_fund_nav.items():
+                mgr = _manager_of(fname)
+                mgr_nav[mgr] = mgr_nav.get(mgr, 0.0) + float(v)
+            lines.append("| manager | end-of-horizon PE NAV |")
+            lines.append("|---|---:|")
+            for mgr in sorted(mgr_nav.keys()):
+                lines.append(f"| {mgr} | ${mgr_nav[mgr]:,.0f} |")
+            lines.append("")
+
+        lines.append(
+            "_Note: manager identity does not enter the ledger (`source` "
+            "remains `pacing:<fund_name>`); the section above is computed "
+            "by joining ledger PE-flow rows back to `pe_pacing.funds` "
+            "metadata. Exited funds (`status: exited`) are excluded from "
+            "forward-flow diagnostics. See MODEL_DOCUMENTATION.md "
+            "§Phase 9 design._"
+        )
+        lines.append("")
+
     # Cost-aware allocator calibration (engine=cvxportfolio only). Emit
     # the rule-of-thumb suggested λ_norm vs the configured value, plus a
     # corner-dominance flag per the 2026-05-02 calibration sweep

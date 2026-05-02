@@ -184,9 +184,18 @@ def _build_ledger(
         public_equity_rates, index=horizon_periods, dtype=float, name="public_equity"
     )
 
+    # Phase 9: filter status="exited" funds before adapter dispatch.
+    # Exited funds generate no forward flows; the projection is forward-
+    # looking. Active / committed / planned all pass through (planned
+    # funds with vintages outside the horizon naturally produce no rows
+    # via the adapter's existing horizon filter).
+    pacing_for_adapter = cfg.pe_pacing.model_copy(
+        update={"funds": [f for f in cfg.pe_pacing.funds if f.status != "exited"]}
+    )
+
     pe_adapter = make_pe_adapter(engine=cfg.base.pe.engine)
     pe_proj = pe_adapter.project_horizon(
-        cfg.pe_pacing,
+        pacing_for_adapter,
         start_q,
         n_q,
         cma=cma,

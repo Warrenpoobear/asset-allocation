@@ -4761,3 +4761,69 @@ what changed, why, impact on outputs, backward-compatibility flag.
   section appears only when at least one fund carries a Phase 9
   field.
 * **Backward-compatible.** Yes (design only).
+
+### 2026-05-02 — Phase 9 implementation: manager / fund metadata enrichment
+
+* **What.** Implements the §Phase 9 design locked one commit prior.
+  Five surfaces:
+  1. **Schema** (`io/schemas.py`). New ``_FeeModelConfig`` (3
+     bounded fields). ``FundConfig`` extended with optional
+     ``manager`` / ``fund_id`` / ``strategy`` (Literal) /
+     ``fee_model`` / ``status`` (default ``"active"``). New
+     ``_STRATEGY_TO_SLEEVE`` mapping. Per-fund ``model_validator``
+     enforces ``strategy ↔ sleeve`` consistency (with
+     ``"secondary"`` flexible across pe_* sleeves).
+  2. **Cross-fund validation** (PEPacingConfig.model_validator).
+     Globally-unique ``FundConfig.name`` (load-bearing — ledger
+     source remains ``pacing:<fund_name>``); globally-unique
+     ``fund_id`` when set on any fund; ``(manager, name)``
+     uniqueness when manager set (defence-in-depth).
+  3. **Orchestrator** (`integration/orchestrator.py`). Filters
+     ``status="exited"`` funds out of the pacing config before
+     adapter dispatch via
+     ``pacing.model_copy(update={"funds": [...]})``. TA and STAIRS
+     adapters are unchanged. ``PROJECTION_COLUMNS`` byte-stable
+     (Phase 7 contract preserved).
+  4. **Report** (`integration/report.py`). New
+     ``## PE program structure`` section gated on
+     ``has_phase9_metadata`` (any fund with manager / fund_id /
+     strategy / fee_model / non-default status). Six aggregations:
+     commitment summary (manager × sleeve), unfunded by manager,
+     cumulative calls / distributions by manager, vintage
+     concentration, manager concentration (top 3), NAV by manager
+     (end of horizon). Manager attribution computed by joining
+     ledger PE-flow rows (``source = "pacing:<fund_name>"``) back
+     to ``cfg.pe_pacing.funds`` — manager identity does not enter
+     the ledger.
+  5. **Tests** (`tests/test_pe_metadata.py`, 20 cases).
+* **Locked semantics enforced.**
+  - ``FundConfig.name`` globally unique (test: duplicate name
+    fails loudly).
+  - ``fund_id`` globally unique when set; partial population (some
+    funds set, others not) is allowed.
+  - ``status="exited"`` skipped in projection (test: zero ledger
+    rows for the exited fund's source).
+  - ``status="planned"`` projected when vintage is in horizon
+    (test: planned fund produces flows).
+  - ``fee_model`` stored but **not consumed** by projection math
+    (test: TA projections byte-identical with vs without
+    ``fee_model`` set).
+  - Default fixture (no Phase 9 metadata) produces byte-identical
+    ``ledger.parquet`` and ``manifest.json`` (test:
+    ``test_default_fixture_run_id_unchanged_under_phase9``).
+* **L-status.** L1 / L8 / L14 unchanged. Phase 9 adds no math.
+* **Impact on outputs.** **Zero on shipped configs.** The new
+  section is gated on Phase 9 metadata being present somewhere; the
+  shipped fixture has no Phase 9 fields, so ``report.md`` is
+  byte-identical to pre-Phase-9. Out-of-tree configs that add
+  manager / fund_id / etc. start seeing the new section
+  automatically.
+* **211 tests pass** (was 191). 20 new; zero regressions; zero
+  re-anchored.
+* **Backward-compatible.** Yes. All Phase 9 fields are optional
+  (or default to ``"active"`` for ``status``); existing
+  ``pe_pacing.yaml`` files continue to validate. The globally-unique
+  ``name`` rule is a new constraint but the shipped fixture (one
+  fund) trivially satisfies it; out-of-tree configs with duplicate
+  fund names will fail loudly — that is the intended catch
+  (duplicate names create ambiguous ledger sources).
