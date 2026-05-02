@@ -1,3 +1,4 @@
 -r requirements.txt
+-e .[riskfolio,cvxportfolio]
 pytest==8.2.0
 pytest-cov==5.0.0
