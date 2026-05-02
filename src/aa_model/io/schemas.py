@@ -530,6 +530,20 @@ class GuardrailConfig(BaseModel):
     # the rate denominator (reviewer tightening 3).
     spending_base_weights: dict[str, float] | None = Field(default=None)
 
+    # Phase 12.5 / L19 flow-side: trailing window for the
+    # distributable_income base. Default 4 quarters (TTM). Required
+    # when spending_base == "distributable_income". Smaller windows
+    # are noisier; larger windows lag regime shifts.
+    distribution_window_quarters: int | None = Field(default=None, ge=1, le=20)
+
+    # Phase 12.5 / L19 flow-side: bootstrap distributable-income value
+    # used for (a) the initial-rate denominator at run start (no
+    # closed quarters yet) and (b) any year-boundary call where the
+    # closed-prior-quarter window is incomplete. Required when
+    # spending_base == "distributable_income". Strictly positive when
+    # set; non-finite rejected explicitly.
+    bootstrap_distributable_income_usd: float | None = Field(default=None, gt=0.0)
+
     @field_validator("absolute_min_annual_usd", "absolute_max_annual_usd")
     @classmethod
     def _absolute_clamp_finite(cls, v: float | None) -> float | None:
@@ -540,6 +554,19 @@ class GuardrailConfig(BaseModel):
             return v
         if not math.isfinite(v):
             raise ValueError(f"absolute clamp value must be finite; got {v!r}")
+        return v
+
+    @field_validator("bootstrap_distributable_income_usd")
+    @classmethod
+    def _bootstrap_finite(cls, v: float | None) -> float | None:
+        # Phase 12.5 / L19: pydantic's gt=0.0 admits inf; reject
+        # non-finite explicitly so a user mistake fails loudly.
+        if v is None:
+            return v
+        if not math.isfinite(v):
+            raise ValueError(
+                f"bootstrap_distributable_income_usd must be finite; got {v!r}"
+            )
         return v
 
     @field_validator("spending_base_weights")
@@ -604,6 +631,47 @@ class GuardrailConfig(BaseModel):
             raise ValueError(
                 "spending_base='custom_policy' requires spending_base_weights"
             )
+        return self
+
+    @model_validator(mode="after")
+    def _distribution_fields_only_with_distributable_income(
+        self,
+    ) -> GuardrailConfig:
+        # Phase 12.5 / L19 flow-side: distribution_window_quarters
+        # and bootstrap_distributable_income_usd are meaningful only
+        # for spending_base='distributable_income'. Setting them with
+        # any other base is a config mistake — fail loud (matches the
+        # weights-only-with-custom_policy discipline above).
+        is_distributable_income = self.spending_base == "distributable_income"
+        if (
+            self.distribution_window_quarters is not None
+            and not is_distributable_income
+        ):
+            raise ValueError(
+                "distribution_window_quarters is only meaningful when "
+                f"spending_base='distributable_income'; got "
+                f"{self.spending_base!r}"
+            )
+        if (
+            self.bootstrap_distributable_income_usd is not None
+            and not is_distributable_income
+        ):
+            raise ValueError(
+                "bootstrap_distributable_income_usd is only meaningful when "
+                f"spending_base='distributable_income'; got "
+                f"{self.spending_base!r}"
+            )
+        if is_distributable_income:
+            missing = []
+            if self.distribution_window_quarters is None:
+                missing.append("distribution_window_quarters")
+            if self.bootstrap_distributable_income_usd is None:
+                missing.append("bootstrap_distributable_income_usd")
+            if missing:
+                raise ValueError(
+                    "spending_base='distributable_income' requires: "
+                    + ", ".join(missing)
+                )
         return self
 
 
@@ -904,11 +972,20 @@ class StudyConfig(BaseModel):
         if base is None or base == "total_nav":
             return self  # default behavior — no cross-config requirements
 
+        # Phase 12.5 / L19 flow-side: distributable_income reads ledger
+        # `distribution_inflow` rows, not CMA tags. The window +
+        # bootstrap fields are validated on GuardrailConfig itself; no
+        # cross-CMA requirement here. Return early so the cma.liquidity
+        # check below does not fire on this mode.
+        if base == "distributable_income":
+            return self
+
         cma_buckets = set(self.cma.expected_returns_annual.keys())
 
-        # Any non-total_nav base requires CMA liquidity tags covering
-        # every bucket. CMAConfig already validates bucket coverage
-        # when liquidity is present; here we enforce its presence.
+        # Any non-total_nav, non-distributable_income base requires CMA
+        # liquidity tags covering every bucket. CMAConfig already
+        # validates bucket coverage when liquidity is present; here we
+        # enforce its presence.
         if self.cma.liquidity is None:
             raise ValueError(
                 f"spending.guardrail.spending_base={base!r} requires "

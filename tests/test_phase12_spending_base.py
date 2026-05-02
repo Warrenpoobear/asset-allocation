@@ -144,6 +144,11 @@ def test_spending_base_defaults_and_literals():
         )
         if mode == "custom_policy":
             kwargs["spending_base_weights"] = {"cash": 1.0}
+        if mode == "distributable_income":
+            # Phase 12.5: schema now requires window + bootstrap when
+            # this mode is selected.
+            kwargs["distribution_window_quarters"] = 4
+            kwargs["bootstrap_distributable_income_usd"] = 1_000_000.0
         gr = GuardrailConfig(**kwargs)
         assert gr.spending_base == mode
 
@@ -350,12 +355,10 @@ def test_custom_policy_bucket_weighted_blend():
     assert excl_tier["locked_strategic"] == pytest.approx(25_000_000.0)  # land
 
 
-def test_distributable_income_raises_not_implemented():
-    """Phase 12.5 stub — selecting distributable_income at runtime fails loud."""
-    nav = _nav_4bucket()
-    liq, inc = _cma_tags_4bucket()
-    with pytest.raises(NotImplementedError, match="Phase 12.5"):
-        compute_spending_base(nav, liq, inc, "distributable_income", None)
+# Phase 12.5 implements distributable_income; the Phase 12 stub test
+# that asserted NotImplementedError has been retired. See
+# tests/test_phase125_distributable_income.py for the Phase 12.5
+# behavioral test suite.
 
 
 # ---- 8-11. Owl integration -------------------------------------------------

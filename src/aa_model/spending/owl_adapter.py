@@ -171,6 +171,27 @@ class OwlRule(SpendingRule):
             out["material_illiquid_share"] = material / total_nav
         else:
             out["material_illiquid_share"] = 0.0
+
+        # Phase 12.5 / L19 flow-side diagnostics. Populated when the
+        # selected mode is distributable_income; empty / neutral
+        # otherwise. The report renderer keys off these fields plus
+        # spending_base_mode to choose the third render mode.
+        last_realized = self._last_spending_base_realized
+        if (
+            self._last_spending_base_mode == "distributable_income"
+            and last_realized is not None
+        ):
+            out["trailing_distributable_income_usd"] = float(
+                last_realized.base_usd
+            )
+            out["distributable_income_by_source_usd"] = dict(
+                last_realized.distributable_income_by_source_usd
+            )
+            out["used_bootstrap_at_run_end"] = bool(last_realized.is_bootstrap)
+        else:
+            out["trailing_distributable_income_usd"] = 0.0
+            out["distributable_income_by_source_usd"] = {}
+            out["used_bootstrap_at_run_end"] = False
         return out
 
     def quarterly_outflow_at(
@@ -224,7 +245,9 @@ class OwlRule(SpendingRule):
         # configured spending base on both sides. Default
         # (gr.spending_base in {None, "total_nav"}) is byte-identical
         # to the Phase 11 path (compute_spending_base short-circuits
-        # to nav.sum()).
+        # to nav.sum()). Phase 12.5 adds the distributable_income
+        # branch via the new ledger / prior_quarter / window /
+        # bootstrap kwargs (additive, ignored by NAV-side modes).
         nav_realized_series = ledger.end_nav_through(prior_q)
         nav_realized_total = float(nav_realized_series.sum())
         realized = compute_spending_base(
@@ -233,14 +256,34 @@ class OwlRule(SpendingRule):
             params.cma_income_producing,
             gr.spending_base,
             gr.spending_base_weights,
+            ledger=ledger,
+            prior_quarter=prior_q,
+            distribution_window_quarters=gr.distribution_window_quarters,
+            bootstrap_distributable_income_usd=gr.bootstrap_distributable_income_usd,
         )
         initial_nav_series = pd.Series(ledger.initial_nav, dtype=float)
+        # Phase 12.5 / L19 flow-side: the initial-rate denominator for
+        # distributable_income is the household's STARTING income figure —
+        # the bootstrap value the user provides. We force the helper down
+        # the bootstrap branch by passing a prior_quarter that predates
+        # the run (earliest_realized < start_quarter ⇒ bootstrap fires).
+        # NAV-side modes ignore prior_quarter and read initial_nav_series
+        # directly, so this is a no-op for them.
+        initial_prior_q = (
+            params.start_quarter - 1
+            if gr.spending_base == "distributable_income"
+            else prior_q
+        )
         initial = compute_spending_base(
             initial_nav_series,
             params.cma_liquidity,
             params.cma_income_producing,
             gr.spending_base,
             gr.spending_base_weights,
+            ledger=ledger,
+            prior_quarter=initial_prior_q,
+            distribution_window_quarters=gr.distribution_window_quarters,
+            bootstrap_distributable_income_usd=gr.bootstrap_distributable_income_usd,
         )
 
         # Phase 12 reviewer tightening 3 runtime guard: the initial
@@ -254,6 +297,29 @@ class OwlRule(SpendingRule):
                 f"selected mode={gr.spending_base!r}; "
                 f"weights={gr.spending_base_weights!r}; "
                 f"initial_nav_by_bucket={dict(initial_nav_series)}"
+            )
+
+        # Phase 12.5 / L19 flow-side runtime guard: when the realized
+        # window has elapsed (no longer using bootstrap) but the
+        # trailing distributable income is zero, the household has
+        # no realized spendable income this period. Asserting a
+        # withdrawal rate against zero is meaningless — fail loudly
+        # with the named remediation paths. Reuses the Phase 12
+        # base>0 pattern.
+        if (
+            gr.spending_base == "distributable_income"
+            and not realized.is_bootstrap
+            and realized.base_usd <= 0.0
+        ):
+            raise ValueError(
+                f"OwlRule: realized trailing distributable income is "
+                f"{realized.base_usd}; window="
+                f"{gr.distribution_window_quarters}q ending at {prior_q}; "
+                f"by_source={realized.distributable_income_by_source_usd}. "
+                "The household has no realized distributable income in the "
+                "closed window. Either wait for a producer-feed quarter, "
+                "configure a wider window, or switch to a non-flow-side "
+                "spending base."
             )
 
         if realized.base_usd > 0.0:

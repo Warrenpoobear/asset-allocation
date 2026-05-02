@@ -25,16 +25,27 @@ def test_basic_chain_consistency():
 
 def test_canonical_intra_quarter_ordering():
     q = _q("2026Q1")
-    L = QuarterlyLedger("r", initial_nav={"a": 0.0}, start_quarter=q)
+    # All rows on bucket="cash" so distribution_inflow's structural
+    # constraint (cash-only + amount > 0) is satisfied alongside the
+    # other flow types. Phase 12.5 added distribution_inflow to
+    # FLOW_ORDER between inflow and return.
+    L = QuarterlyLedger("r", initial_nav={"cash": 0.0}, start_quarter=q)
     # Insert in reverse order; finalize should re-sort.
-    L.add(quarter=q, bucket="a", flow_type="transaction_cost", amount_usd=0.0, source="cvx")
-    L.add(quarter=q, bucket="a", flow_type="rebalance", amount_usd=0.0, source="z")
-    L.add(quarter=q, bucket="a", flow_type="spend", amount_usd=0.0, source="s")
-    L.add(quarter=q, bucket="a", flow_type="pe_nav_mark", amount_usd=0.0, source="p")
-    L.add(quarter=q, bucket="a", flow_type="pe_distribution", amount_usd=0.0, source="p")
-    L.add(quarter=q, bucket="a", flow_type="pe_call", amount_usd=0.0, source="p")
-    L.add(quarter=q, bucket="a", flow_type="return", amount_usd=0.0, source="cma")
-    L.add(quarter=q, bucket="a", flow_type="inflow", amount_usd=0.0, source="ext")
+    L.add(quarter=q, bucket="cash", flow_type="transaction_cost", amount_usd=0.0, source="cvx")
+    L.add(quarter=q, bucket="cash", flow_type="rebalance", amount_usd=0.0, source="z")
+    L.add(quarter=q, bucket="cash", flow_type="spend", amount_usd=0.0, source="s")
+    L.add(quarter=q, bucket="cash", flow_type="pe_nav_mark", amount_usd=0.0, source="p")
+    L.add(quarter=q, bucket="cash", flow_type="pe_distribution", amount_usd=0.0, source="p")
+    L.add(quarter=q, bucket="cash", flow_type="pe_call", amount_usd=0.0, source="p")
+    L.add(quarter=q, bucket="cash", flow_type="return", amount_usd=0.0, source="cma")
+    L.add(
+        quarter=q,
+        bucket="cash",
+        flow_type="distribution_inflow",
+        amount_usd=1.0,
+        source="distribution:portfolio:test",
+    )
+    L.add(quarter=q, bucket="cash", flow_type="inflow", amount_usd=0.0, source="ext")
     df = L.finalize()
     assert df["flow_type"].tolist() == list(FLOW_ORDER)
 

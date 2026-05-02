@@ -95,15 +95,22 @@ queue a separate phase to address it.
   rate-based Guyton-Klinger semantics, which is scale-invariant
   by design. **L16 closure does NOT address spending-base
   realism — Owl still measures rate against total NAV.**
-* **L19 (PARTIALLY RESOLVED, Phase 12)** — base-side spending
-  denominator realism introduced. Owl's withdrawal-rate
-  denominator is configurable across `total_nav` (default,
-  byte-stable),  `liquid_nav`, `liquid_plus_income_producing_nav`,
-  and `custom_policy`. Both initial-rate and current-rate
-  denominators are replaced symmetrically; rate-band geometry
-  preserved. Flow-side distributable-income realism remains open
-  until Phase 12.5 (`distributable_income` mode + new
-  `distribution_inflow` ledger flow type).
+* **L19 (PARTIALLY RESOLVED, Phase 12 + Phase 12.5)** — spending-
+  rule denominator **infrastructure** is complete on both sides.
+  Phase 12 (commit `92c327d`) shipped the base-side: four
+  configurable modes (`total_nav` default, `liquid_nav`,
+  `liquid_plus_income_producing_nav`, `custom_policy`). Phase 12.5
+  shipped the flow-side: new ``distribution_inflow`` ledger flow
+  type + the ``distributable_income`` spending base reading the
+  trailing realized sum with bootstrap fallback. Both initial-rate
+  and current-rate denominators are replaced symmetrically;
+  rate-band geometry preserved. **Production distributable-income
+  realism remains producer-dependent (Phase 13 RE+OpCo pipeline +
+  Phase 14 cash-flow / entity ingestion).** Phase 12.5 does NOT
+  determine legal / tax / entity-governance distributability; it
+  consumes rows already classified upstream as
+  family-office-distributable. L19 flips to RESOLVED only after
+  the producer layer exists.
 
 A future contributor reading any spending- or liquidity-related
 phase should treat this section as governing context — not the
@@ -597,7 +604,7 @@ doesn't have to skim eighteen entries to know what's open.
 | L16 | Owl is scale-invariant in initial NAV | **RESOLVED** | Phase 11 (optional absolute-dollar clamps in `GuardrailConfig`) |
 | L17 | Cross-engine metric comparability is not meaningful | **ACCEPTED LIMITATION** | Phase 10 consolidation — interpretation problem, not architecture |
 | L18 | Owl misreads inflation shock as "headroom" and raises spending | **RESOLVED** | Phase 4a |
-| L19 | Spending base realism for illiquid SFO balance sheets | **PARTIALLY RESOLVED** | Phase 12 (base-side); flow-side distributable-income realism remains open until Phase 12.5 |
+| L19 | Spending base realism for illiquid SFO balance sheets | **PARTIALLY RESOLVED** | Phase 12 + 12.5 — spending-rule denominator infrastructure complete; production distributable-income realism producer-dependent (Phase 13/14) |
 
 #### Status definitions
 
@@ -1364,29 +1371,52 @@ The original Phase 3c text follows for audit-trail purposes:
   absolute dollar guardrails; switching to an absolute-dollar guardrail
   is a real-world refinement but doesn't qualify as Phase 3c minimum.
 
-### L19 — Spending base realism for illiquid SFO balance sheets — [PARTIALLY RESOLVED 2026-05-02, Phase 12]
+### L19 — Spending base realism for illiquid SFO balance sheets — [PARTIALLY RESOLVED 2026-05-02, Phase 12 + Phase 12.5]
 
-> **Status: PARTIALLY RESOLVED in Phase 12.** Base-side spending
-> denominator realism introduced. Flow-side distributable-income
-> realism remains open until Phase 12.5.
+> **Status: PARTIALLY RESOLVED in Phase 12 + Phase 12.5.**
+> Spending-rule denominator infrastructure is complete on both
+> sides; production distributable-income realism remains
+> producer-dependent.
 >
-> Owl's withdrawal-rate denominator is now configurable via
-> ``GuardrailConfig.spending_base`` across four modes — `total_nav`
-> (default, byte-stable with Phase 11), `liquid_nav`,
-> `liquid_plus_income_producing_nav`, and `custom_policy` — with
-> both the initial-rate and current-rate denominators replaced
-> symmetrically. The standing principle's distinction between
-> *total NAV* and *spendable resources* is now expressible in
-> config and visible in the report (`## Owl spending base
-> (advisory)`).
+> **Base-side (Phase 12, commit ``92c327d``):** Owl's withdrawal-
+> rate denominator is configurable via ``GuardrailConfig.spending_base``
+> across four NAV-side modes — `total_nav` (default, byte-stable
+> with Phase 11), `liquid_nav`, `liquid_plus_income_producing_nav`,
+> and `custom_policy` — with both the initial-rate and current-rate
+> denominators replaced symmetrically.
 >
-> The mode ``liquid_plus_income_producing_nav`` includes the **NAV**
-> of buckets tagged ``income_producing``; it does NOT measure
-> actual distributable income. Stabilized real estate tagged
-> ``income_producing=true`` contributes its appraised NAV to this
-> base — overstating spending capacity vs. its true distributable
-> yield. The structurally correct fix (realized distributions as
-> a ledger flow type) is Phase 12.5.
+> **Flow-side (Phase 12.5):** new ``distribution_inflow`` ledger
+> flow type + ``distributable_income`` spending base. Sums realized
+> distributable income over a trailing window
+> (``distribution_window_quarters``, default 4q = TTM) with a
+> static ``bootstrap_distributable_income_usd`` fallback for
+> q0 / insufficient-history. The runtime guard fails loud when the
+> realized window has elapsed but the trailing sum is zero. The
+> mode is **infrastructure-only**: production runs require Phase
+> 13 (RE+OpCo pipeline) and Phase 14 (cash-flow / entity
+> ingestion) producers to emit ``distribution_inflow`` rows.
+>
+> **Phase 12.5 does NOT determine legal / tax / entity-governance
+> distributability** — it consumes rows already classified upstream
+> by a producer as family-office-distributable (CRUT mandates,
+> gift-trust restrictions, OpCo retention policy, RE-LLC
+> distribution waterfalls, federal / state tax withholding all
+> sit at the producer layer, not here).
+>
+> **Recommended source convention** (documented but not enforced):
+> ``source = "distribution:<domain>:<entity_or_asset_id>"`` with
+> ``<domain> ∈ {real_estate, opco, portfolio, entity}``. Producers
+> built in Phase 13/14 can emit conformant rows from day one.
+>
+> **Recurring vs one-time** classification is deferred to the
+> producer layer. Phase 12.5 treats every ``distribution_inflow``
+> row equally; the report renders a permanent CAVEAT line so a
+> high trailing-income base is not silently mistaken for stable
+> recurring yield.
+>
+> **L19 flips to RESOLVED** only after the producer layer exists
+> and the SFO can run end-to-end on real household income data —
+> not on the existence of a flow type and a helper.
 
 * **Model behavior.** ``OwlRule.quarterly_outflow_at`` reads
   ``ledger.end_nav_through(prior_q).sum()`` — i.e., **total modeled
@@ -7772,3 +7802,87 @@ future spending- and liquidity-related modeling work.
   trajectories byte-identical to Phase 11.
 * **L19.** Flips to ``[PARTIALLY RESOLVED 2026-05-02, Phase 12]``.
   Base-side closed; flow-side open until Phase 12.5.
+
+### 2026-05-02 — Phase 12.5 design-lock + reviewer tightenings
+
+* **What.** Two docs-only commits (``63ec0ef``, ``7505770``) adding
+  the ``## Phase 12.5 design (pre-implementation) — L19 flow-side``
+  block to ``MODEL_DOCUMENTATION.md``, then applying four reviewer
+  tightenings to it. No code changes.
+* **Tightenings.** (1) Phase 12.5 does NOT determine legal /
+  tax / entity-governance distributability — consumes upstream-
+  classified rows. (2) Recommended source convention
+  ``distribution:<domain>:<entity_or_asset_id>`` documented
+  (not enforced). (3) Recurring-vs-one-time disclaimer added to
+  the rendered advisory + standing warning-band entry. (4) L19
+  status narrowed: stays at PARTIALLY RESOLVED after
+  implementation; flips to RESOLVED only after Phase 13/14
+  producers exist.
+* **Tests.** Docs-only; zero code change.
+* **Backward-compatible.** Yes — design only.
+
+### 2026-05-02 — Phase 12.5 implementation: L19 flow-side infrastructure
+
+* **What.** Implements the design-lock above as one cohesive
+  commit. New ledger flow type ``distribution_inflow`` (additive to
+  ``FLOW_ORDER`` between ``inflow`` and ``return``; cash-bucket
+  positive rows; structural validation at add-time).
+  ``GuardrailConfig`` gains ``distribution_window_quarters``
+  (default 4q TTM, range [1,20]) and
+  ``bootstrap_distributable_income_usd`` (strictly positive;
+  finite). New pure helper
+  ``compute_distributable_income_base`` reads
+  ``ledger.closed_through(prior_q)`` and rolls up
+  ``distribution_inflow`` rows over the trailing window with a
+  bootstrap fallback for q0 / insufficient history. Extended
+  ``compute_spending_base`` dispatches to the new helper for the
+  Phase 12.5 mode.  ``SpendingBaseBreakdown`` gained two additive
+  fields (``distributable_income_by_source_usd``, ``is_bootstrap``)
+  with neutral defaults — Phase 12 callers byte-identical.
+  ``OwlRule`` integrates the new mode symmetrically across initial
+  and current rate denominators (initial forces bootstrap by passing
+  ``prior_quarter < start_quarter``); zero-income runtime guard
+  fails loud after the bootstrap window has elapsed; diagnostics
+  surfaces five new fields. ``report.md`` renders a third advisory
+  mode (``distributable_income``) with by-source breakdown, dual
+  rates, regime classification, recurring-vs-one-time CAVEAT, and
+  the producer-dependent framing. PE distributions explicitly
+  excluded by default. ``test_canonical_intra_quarter_ordering``
+  updated to seed a ``distribution_inflow`` row at the new slot in
+  ``FLOW_ORDER``; the obsolete Phase 12
+  ``NotImplementedError`` stub test was retired.
+* **Why.** Closes the *infrastructure side* of L19 (flow side);
+  the schema, helper, and report can now consume realized
+  distributable-income rows when a producer feeds them. **The
+  producer is out of scope** — Phase 13 (RE+OpCo pipeline) and
+  Phase 14 (cash-flow / entity ingestion) own that.
+* **Scope discipline.** Phase 12.5 is *consumer-side*
+  infrastructure. It does not implement the producer of
+  distributable income, does not determine legal / tax / entity-
+  governance distributability, and does not classify rows as
+  recurring vs one-time.
+* **Files touched.** ``src/aa_model/integration/ledger.py``
+  (FLOW_ORDER + add-time validation + NAV-conservation set);
+  ``src/aa_model/io/schemas.py`` (GuardrailConfig + StudyConfig);
+  ``src/aa_model/spending/spending_base.py``
+  (``compute_distributable_income_base`` + extended
+  ``compute_spending_base`` + ``SpendingBaseBreakdown``);
+  ``src/aa_model/spending/owl_adapter.py`` (mode wiring + initial
+  bootstrap forcing + zero-income guard + extended diagnostics);
+  ``src/aa_model/integration/report.py`` (new render mode);
+  ``MODEL_DOCUMENTATION.md`` (L19 status + this entry).
+  ``tests/test_phase125_distributable_income.py`` (NEW — 13 tests).
+  ``tests/test_ledger.py`` (canonical-ordering test seeds new flow
+  type). ``tests/test_phase12_spending_base.py`` (Phase 12 stub
+  test retired; Phase 12 test #1 now sets the Phase 12.5 schema
+  fields when constructing ``distributable_income``).
+* **Tests.** 13 new Phase 12.5 tests + 12 Phase 12 tests still
+  green (one stub retired) + 225 existing tests still green =
+  **252 passed**. Default-off byte-stability verified.
+* **Backward-compatible.** Yes. Existing fixtures, configs, and
+  trajectories byte-identical to Phase 12.
+* **L19.** Stays at ``[PARTIALLY RESOLVED 2026-05-02, Phase 12 +
+  Phase 12.5]`` (reviewer tightening 4). Wording: spending-rule
+  denominator infrastructure complete; production distributable-
+  income realism producer-dependent (Phase 13/14). L19 flips to
+  RESOLVED only after producers exist.

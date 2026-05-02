@@ -21,6 +21,7 @@ import pandas as pd
 # transaction_cost in the contributing-flows set; see validate().
 FLOW_ORDER: tuple[str, ...] = (
     "inflow",
+    "distribution_inflow",
     "return",
     "pe_call",
     "pe_distribution",
@@ -85,6 +86,22 @@ class QuarterlyLedger:
         amt = float(amount_usd)
         if amt != amt:  # NaN check
             raise ValueError(f"amount_usd is NaN for ({quarter}, {bucket}, {flow_type})")
+        # Phase 12.5 / L19 flow-side: distribution_inflow rows must be
+        # cash-bucket positive — they represent realized distributable
+        # income flowing into household cash. The producer (Phase 13/14)
+        # is responsible for the upstream classification; the ledger
+        # enforces only the structural constraint.
+        if flow_type == "distribution_inflow":
+            if bucket != "cash":
+                raise ValueError(
+                    f"distribution_inflow must target bucket='cash'; got {bucket!r} "
+                    f"at ({quarter}, source={source!r})"
+                )
+            if amt <= 0.0:
+                raise ValueError(
+                    f"distribution_inflow amount_usd must be > 0; got {amt} "
+                    f"at ({quarter}, source={source!r})"
+                )
         self._rows.append(
             {
                 "quarter": quarter,
@@ -312,6 +329,12 @@ class QuarterlyLedger:
                                 "return",
                                 "pe_nav_mark",
                                 "inflow",
+                                # Phase 12.5 / L19 flow-side: distribution_inflow
+                                # adds realized distributable cash to total NAV.
+                                # Internal to the household (NOT in the external
+                                # cash flow tie-out below) but DOES change total
+                                # NAV — must be in the conservation set.
+                                "distribution_inflow",
                                 "spend",
                                 "transaction_cost",
                             ]

@@ -756,11 +756,127 @@ def write_markdown_report(
         rate_base = float(spending_diagnostics.get("withdrawal_rate_vs_spending_base", 0.0))
         material_share = float(spending_diagnostics.get("material_illiquid_share", 0.0))
 
+        # Mode (c): Phase 12.5 / L19 flow-side render — distributable_income.
+        # Dispatched before the NAV-side modes so the Phase 12 (a) block
+        # below does NOT fire for this mode (its tier/income-flag exclusion
+        # rollups are empty here, and the dollar-base interpretation is
+        # different — trailing realized income vs. NAV slice).
+        if mode_raw == "distributable_income":
+            trailing_income = float(
+                spending_diagnostics.get("trailing_distributable_income_usd", 0.0)
+            )
+            by_source = spending_diagnostics.get(
+                "distributable_income_by_source_usd", {}
+            )
+            used_bootstrap = bool(
+                spending_diagnostics.get("used_bootstrap_at_run_end", False)
+            )
+            gr = cfg.spending.guardrail
+            window_q = gr.distribution_window_quarters if gr is not None else None
+            bootstrap_usd = (
+                gr.bootstrap_distributable_income_usd if gr is not None else None
+            )
+            # Render only when Owl entered the year-boundary path —
+            # diagnostics populated.
+            if base_usd > 0.0 and total_nav > 0.0:
+                lines.append("## Owl spending base (advisory)")
+                lines.append("")
+                lines.append("- selected base: distributable_income")
+                lines.append("- run-end totals:")
+                lines.append(f"  - total NAV:                          ${total_nav:,.0f}")
+                window_label = f"{window_q}q" if window_q is not None else "—"
+                lines.append(
+                    f"  - trailing distributable income ({window_label}):  "
+                    f"${trailing_income:,.0f}"
+                )
+                if bootstrap_usd is not None:
+                    lines.append(
+                        f"  - bootstrap distributable income:     "
+                        f"${float(bootstrap_usd):,.0f}"
+                    )
+                lines.append(
+                    "  - source of base this year:           "
+                    + ("bootstrap" if used_bootstrap else "realized")
+                )
+                if by_source:
+                    lines.append("- distributable income by source (run end):")
+                    for src in sorted(by_source.keys()):
+                        lines.append(
+                            f"  - {src}: ${float(by_source[src]):,.0f}"
+                        )
+                lines.append("- withdrawal-rate comparison (run end):")
+                lines.append(f"  - rate vs total NAV:                  {rate_total * 100:.2f}%")
+                lines.append(
+                    f"  - rate vs distributable-income base:  "
+                    f"{rate_base * 100:.2f}%   "
+                    "← rate the household actually faces"
+                )
+                lines.append("- regime:")
+                lines.append(
+                    "  - flow-side aware (selected base = trailing realized "
+                    "income)"
+                )
+                if rate_base >= 1.00:
+                    lines.append(
+                        "  - **STRONG WARNING — rate vs distributable-income "
+                        f"base ≥ 100% ({rate_base * 100:.0f}%); household is "
+                        "spending more than it earns; trajectory will erode "
+                        "capital.**"
+                    )
+                elif rate_base >= 0.80:
+                    lines.append(
+                        f"  - **WARNING — rate vs distributable-income base "
+                        f"is {rate_base * 100:.0f}%; within 20% of income "
+                        "ceiling.**"
+                    )
+                if used_bootstrap:
+                    lines.append(
+                        "  - INFO: run end used bootstrap (insufficient "
+                        "closed window); realized window not yet complete."
+                    )
+                if len(by_source) == 1 and trailing_income > 0.0 and not used_bootstrap:
+                    lines.append(
+                        "  - INFO: single-source income concentration — "
+                        "trailing window dominated by one originator."
+                    )
+                # Phase 12.5 reviewer tightening 3 — recurring-vs-one-time
+                # caveat surfaces as a permanent CAVEAT line so a high
+                # base is not silently mistaken for stable recurring yield.
+                lines.append(
+                    "  - **CAVEAT: Phase 12.5 treats every "
+                    "``distribution_inflow`` row equally. Recurring vs. "
+                    "one-time classification is deferred to the producer "
+                    "layer (Phase 13/14). A high distributable-income base "
+                    "may be overstated if the trailing window is dominated "
+                    "by asset sales, refinancings, special dividends, or "
+                    "one-time entity transfers. Review the by-source "
+                    "breakdown above before relying on the headline rate.**"
+                )
+                lines.append("")
+                lines.append(
+                    "_Phase 12.5 / L19 lands the **infrastructure** for "
+                    "flow-side spending-base realism — the ledger flow type, "
+                    "base computation, and rate-band integration. "
+                    "**Production-grade distributable-income realism remains "
+                    "dependent on Phase 13 (RE+OpCo pipeline) and Phase 14 "
+                    "(cash-flow / entity ingestion) producers.** Phase 12.5 "
+                    "does not determine legal / tax / entity-governance "
+                    "distributability; it consumes rows already classified "
+                    "upstream as family-office-distributable._"
+                )
+                lines.append("")
+
         # Mode (a): non-default base full diagnostic. Render only when
         # the rule actually entered a year-boundary path (snapshots
         # populated) — at <4 quarters Owl never fires the year-boundary
-        # logic and the base diagnostics stay zero.
-        if not is_default and base_usd > 0.0 and total_nav > 0.0:
+        # logic and the base diagnostics stay zero. Phase 12.5 mode is
+        # handled above and short-circuits this block.
+        if (
+            not is_default
+            and mode_raw != "distributable_income"
+            and base_usd > 0.0
+            and total_nav > 0.0
+        ):
             ratio = base_usd / total_nav
             lines.append("## Owl spending base (advisory)")
             lines.append("")
