@@ -487,6 +487,105 @@ These are explicitly called out so future readers cannot misinterpret model
 output. Each entry separates **model behavior** (what the code does) from
 **real-world interpretation** (why the model output may not match reality).
 
+### Limitation status summary (2026-05-02 consolidation)
+
+This table is the **single source of truth for L-status**. Per-entry
+detail follows below; this summary exists so future-phase planning
+doesn't have to skim eighteen entries to know what's open.
+
+| L | Topic | Status | Closed / classified by |
+|---|---|---|---|
+| L1  | PE timing scenarios mechanically affect returns | **PARTIALLY RESOLVED** | Phase 7 (STAIRS resolves; TA persists) |
+| L2  | Returns are NAV-dependent, not regime-dependent | **OPEN — architecture** | Future stochastic CMA + Monte Carlo |
+| L3  | Stub-vs-riskfolio weights are not numerically comparable | **ACCEPTED LIMITATION** | Phase 5 (empty-CMA path test-only); structural difference is by design |
+| L4  | Riskfolio default CMA fallback is a placeholder | **RESOLVED** | Phase 5 |
+| L5  | `source` as a PE-leg pairing key is fragile | **OPEN — schema** | Future recommitment / multi-call work; partially mitigated by Phase 9 globally-unique `name` rule |
+| L6  | `correlation_shock` scenario is omitted | **RESOLVED** | Phase 6 |
+| L7  | Smoothing rule with `weight=0` freezes spending | **ACCEPTED LIMITATION** | Phase 10 consolidation — behavior matches EWMA formula; documented |
+| L8  | Rebalancer treats PE as a liquid sleeve | **RESOLVED** | Phase 8 |
+| L9  | Heavy install footprint for `riskfolio` extra | **ACCEPTED LIMITATION** | Phase 10 consolidation — third-party dependency, no fix possible |
+| L10 | `/mnt/c` filesystem is unsuitable for `.venv` | **ENVIRONMENT NOTE** | Phase 10 consolidation — not a model limitation, environment doc only |
+| L11 | Synthetic 2-row dummy returns frame in Riskfolio adapter | **ACCEPTED LIMITATION** | Phase 10 consolidation — third-party API constraint |
+| L12 | Non-fatal "convert self.cov to PSD" warning | **ACCEPTED LIMITATION** | Phase 10 consolidation — riskfolio internal, benign |
+| L13 | Cvxportfolio adapter has no path dependence | **RESOLVED** | Phase 4b |
+| L14 | Only linear transaction cost is modeled | **PARTIALLY RESOLVED** | Phase 10 (PE-secondary closed by L8; public-bps documented; richer regimes deferred) |
+| L15 | Owl reacts to forecasted NAV, not realized NAV | **RESOLVED** | Phase 4a |
+| L16 | Owl is scale-invariant in initial NAV | **OPEN — modeling** | Future Owl reformulation against absolute spend rate |
+| L17 | Cross-engine metric comparability is not meaningful | **ACCEPTED LIMITATION** | Phase 10 consolidation — interpretation problem, not architecture |
+| L18 | Owl misreads inflation shock as "headroom" and raises spending | **RESOLVED** | Phase 4a |
+
+#### Status definitions
+
+* **RESOLVED** — code change closed the concern; entry retained for
+  audit trail with a `[RESOLVED YYYY-MM-DD, Phase N]` callout.
+* **PARTIALLY RESOLVED** — concern is closed under one engine /
+  scope but persists under another; engine-conditional resolution
+  is documented in the entry. L1 is engine-conditional (STAIRS
+  closes, TA persists). L14 is scope-conditional (PE-secondary
+  closed by L8; public-bps via diagnostic; richer regimes deferred).
+* **ACCEPTED LIMITATION** — the behavior is documented and
+  expected; no code change is planned. Either the limitation is
+  a third-party constraint (L9, L11, L12), an interpretation
+  problem rather than an architecture problem (L3, L17), or
+  documented behavior matching a formula (L7).
+* **ENVIRONMENT NOTE** — not a model limitation; environment-
+  specific guidance for users (L10).
+* **OPEN — architecture** — substantial future work, gated on
+  Monte Carlo / stochastic regime layer (L2).
+* **OPEN — modeling** — real model weakness, no engine in the
+  current stack addresses it (L16).
+* **OPEN — schema** — future schema or data-model work (L5).
+
+#### Roadmap implications (open entries by priority)
+
+Three entries are genuinely open and worth scoping next:
+
+1. **L16 — Owl scale-invariant in initial NAV.** Owl's trigger
+   condition reduces algebraically to a NAV-cancelling form; a
+   $100M household and a $100B household get identical Owl
+   trajectories at the same spend / inflation / band parameters.
+   This is a real model weakness, not a third-party quirk. Fix
+   path: Owl reformulation against absolute spend rate (e.g.,
+   trigger on absolute NAV crossing a fraction of initial, not
+   a ratio that cancels). **No engine in the current stack
+   addresses this.** Standalone phase, ~Phase 11 candidate.
+
+2. **L2 — Returns are NAV-dependent, not regime-dependent.**
+   Scenario perturbations change *levels* but not *dynamics* —
+   no autocorrelation, no volatility clustering, no drawdown
+   contagion. Resolving requires a Monte Carlo path generator
+   plus a stochastic regime layer over CMA. Substantial work;
+   biggest realism upgrade remaining; explicitly deferred until
+   correlation / illiquidity / pacing layers (Phases 6–9) had
+   landed deterministic-first. **Now unblocked structurally;
+   when the project commits to Monte Carlo, L2 is the gate.**
+
+3. **L5 — `source` as PE-leg pairing key is fragile.** Currently
+   adequate (one row per leg per fund per quarter; Phase 9's
+   globally-unique `name` rule lifts the implicit invariant).
+   Becomes binding when recommitment logic, secondary-purchase
+   flows, or multi-call-per-fund-per-quarter pacing land. Fix:
+   add a `flow_id` field to the ledger schema. Schema change;
+   should ride the next phase that needs it (probably Phase 9's
+   manager work landing in production).
+
+The seven `ACCEPTED LIMITATION` / `ENVIRONMENT NOTE` entries
+(L3, L7, L9–L12, L17) are explicitly **not** future work — they
+are documented status calls. Future readers should not interpret
+them as backlog.
+
+#### What this consolidation pass changed
+
+* Six entries had their status formalised (L3, L7, L9, L10, L11,
+  L12, L17 → ``ACCEPTED LIMITATION`` or ``ENVIRONMENT NOTE``).
+  Per-entry detail in the entries below now carries the matching
+  status callout.
+* No code changes; doc-only.
+* Sets up the next phase as a model-weakness fix (L16 candidate),
+  not yet another structural realism layer.
+
+---
+
 ### L1 — PE timing scenarios mechanically affect returns — [PARTIALLY RESOLVED 2026-05-02, Phase 7]
 
 > **Status: PARTIALLY RESOLVED in Phase 7.** Resolution is
@@ -547,7 +646,17 @@ output. Each entry separates **model behavior** (what the code does) from
   breach a coverage floor under realistic dynamics." A stochastic CMA
   + Monte Carlo path generator is needed.
 
-### L3 — Stub-vs-riskfolio weights are not numerically comparable
+### L3 — Stub-vs-riskfolio weights are not numerically comparable — [ACCEPTED LIMITATION 2026-05-02]
+
+> **Status: ACCEPTED LIMITATION** (Phase 10 consolidation). Phase 5
+> made the empty-CMA fallback path test-only (production runs always
+> consume an explicit CMA), so the specific "98% cash" failure mode
+> below now requires a deliberate test-only path. The structural
+> point — stub returns config weights, riskfolio solves a min-var
+> optimization — remains true by design; the two adapters solve
+> different problems and their outputs are **not intended** to be
+> directly comparable. Documented for users who might assume
+> numerical comparability across allocation engines.
 
 * **Model behavior.** With the Phase 1 default empty CMA, the riskfolio
   MinRisk optimizer produces ~98% cash allocation against the
@@ -631,7 +740,15 @@ The original Phase 1 text follows for audit-trail purposes.
   equity-PE links that tighten in drawdowns. Not addressable until a
   stochastic CMA lands.
 
-### L7 — Smoothing rule with `weight=0` freezes spending
+### L7 — Smoothing rule with `weight=0` freezes spending — [ACCEPTED LIMITATION 2026-05-02]
+
+> **Status: ACCEPTED LIMITATION** (Phase 10 consolidation). The
+> behavior matches the EWMA formula literally
+> (``spend_t = w · target_t + (1-w) · spend_{t-1}``; at ``w=0``,
+> ``spend_t = spend_{t-1}`` for all t). Documented in the rule's
+> docstring and in this entry. Users wanting "flat real with
+> inflation" should set ``rule = "flat_real"`` instead. No code
+> change planned.
 
 * **Model behavior.** With `smoothing.weight = 0`, `SmoothingRule`
   freezes spending at `target_0 = annual_spend_usd / 4` for the entire
@@ -697,7 +814,12 @@ The original Phase 1 text follows for audit-trail purposes.
   one unrealistic regime with another. L8 and L14 must move together
   when this part of the system gets serious.
 
-### L9 — Heavy install footprint for `riskfolio` extra
+### L9 — Heavy install footprint for `riskfolio` extra — [ACCEPTED LIMITATION 2026-05-02]
+
+> **Status: ACCEPTED LIMITATION** (Phase 10 consolidation).
+> Out-of-our-control third-party dependency footprint. The adapter is
+> opt-in via the ``[project.optional-dependencies] riskfolio`` extra
+> group, so the core install set stays lean. No fix possible.
 
 * **Model behavior.** `pip install -e ".[riskfolio]"` pulls 80+
   packages including `matplotlib`, `numba`, `vectorbt`, `ipywidgets`,
@@ -708,7 +830,13 @@ The original Phase 1 text follows for audit-trail purposes.
   `[project.optional-dependencies] riskfolio` so the core install set
   remains lean.
 
-### L10 — `/mnt/c` filesystem is unsuitable for `.venv`
+### L10 — `/mnt/c` filesystem is unsuitable for `.venv` — [ENVIRONMENT NOTE 2026-05-02]
+
+> **Status: ENVIRONMENT NOTE** (Phase 10 consolidation). Not a model
+> limitation; environment-specific guidance for users on WSL2
+> machines. Documented to save the next user the diagnostic time.
+> Project-local ``.venv`` is now a symlink to a Linux-fs venv at
+> ``~/.venvs/aa-model``.
 
 * **Model behavior.** Installing the riskfolio extra into a venv at
   `/mnt/c/Projects/asset allocation/asset-allocation/.venv` took 11+
@@ -719,7 +847,15 @@ The original Phase 1 text follows for audit-trail purposes.
   a symlink to a Linux-fs venv. Documented to save the next user the
   same 10 minutes.
 
-### L11 — Synthetic 2-row dummy returns frame in Riskfolio adapter
+### L11 — Synthetic 2-row dummy returns frame in Riskfolio adapter — [ACCEPTED LIMITATION 2026-05-02]
+
+> **Status: ACCEPTED LIMITATION** (Phase 10 consolidation).
+> Third-party API constraint (``riskfolio.Portfolio`` requires a
+> returns frame at construction time even when statistics are
+> overridden via ``optimization(..., hist=False)``). The adapter's
+> 2-row zero-filled workaround is well-documented in
+> ``allocation/riskfolio_adapter.py``. Closes when riskfolio's API
+> changes or when an alternative optimizer replaces it.
 
 * **Model behavior.** `riskfolio.Portfolio(returns=df)` requires a
   returns frame at construction time for shape / index inference, even
@@ -776,7 +912,14 @@ The original Phase 1 text follows for audit-trail purposes.
   current 2-row zero frame vs. with Cholesky-derived samples) will
   ship alongside that fix.
 
-### L12 — Non-fatal "convert self.cov to a positive definite matrix" warning
+### L12 — Non-fatal "convert self.cov to a positive definite matrix" warning — [ACCEPTED LIMITATION 2026-05-02]
+
+> **Status: ACCEPTED LIMITATION** (Phase 10 consolidation).
+> Riskfolio internal warning, fired before the adapter overwrites
+> the covariance matrix; benign. Suppression would require monkey-
+> patching riskfolio's logging, which adds fragility for a
+> non-functional issue. Closes alongside L11 when the synthetic
+> 2-row workaround is no longer needed.
 
 * **Model behavior.** Every `RiskfolioAdapter.fit()` call prints
   `You must convert self.cov to a positive definite matrix` to stderr.
@@ -921,7 +1064,16 @@ introduce a feedback loop the spending side ignores. Plan to lift L13
 and L15 in a single Phase 4 "iterative per-quarter rule" pass; do not
 ship one without the other.
 
-### L17 — Cross-engine metric comparability is not meaningful
+### L17 — Cross-engine metric comparability is not meaningful — [ACCEPTED LIMITATION 2026-05-02]
+
+> **Status: ACCEPTED LIMITATION** (Phase 10 consolidation).
+> Interpretation problem rather than an architecture problem. Stub
+> takes config policy verbatim; riskfolio solves min-var against
+> CMA; cvxportfolio allocator (Phase 4b) solves cost-aware against
+> policy. The three engines solve genuinely different problems —
+> their per-quarter NAV / drawdown / coverage trajectories are not
+> intended to be directly compared as if they answered the same
+> question. Documented for users running multi-engine probes.
 
 * **Model behavior.** The Phase 3 consolidation probe (60 combinations,
   see `scripts/consolidation_probe_p3.py`) surfaced that the existing
