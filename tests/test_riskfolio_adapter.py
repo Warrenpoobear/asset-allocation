@@ -136,6 +136,39 @@ def test_binding_equality_constraint_pins_both_adapters():
 # ---- structural sanity that defends downstream consumers --------------------
 
 
+def test_riskfolio_consumes_explicit_cma_not_fallback():
+    """Phase 5: with an explicit CMA passed, the adapter must reflect those
+    values (not the hard-coded fallback). Two different vol vectors that
+    differ only in the public_equity entry must produce different
+    minimum-variance weights — proves the adapter is reading the CMA.
+    """
+    import numpy as np
+
+    cfg = _config()
+    buckets = list(cfg.stub_weights.keys())
+
+    def _cma_with(vol_equity: float) -> CMA:
+        idx = sorted(buckets)
+        # Same vols as the fallback table for everything except equity.
+        vol_table = {"cash": 0.005, "public_bond": 0.04, "public_equity": vol_equity, "pe_buyout": 0.20}
+        vol = pd.Series([vol_table[b] for b in idx], index=idx, dtype=float)
+        er = pd.Series(0.0, index=idx, dtype=float)
+        corr = pd.DataFrame(np.eye(len(idx)), index=idx, columns=idx)
+        return CMA(expected_returns_annual=er, vol_annual=vol, corr=corr)
+
+    adapter_low = RiskfolioAdapter(_config())
+    adapter_high = RiskfolioAdapter(_config())
+    adapter_low.fit(pd.DataFrame(), _cma_with(0.10), Constraints())
+    adapter_high.fit(pd.DataFrame(), _cma_with(0.30), Constraints())
+    w_low = adapter_low.weights()
+    w_high = adapter_high.weights()
+
+    # Higher equity vol → MinRisk shifts weight away from public_equity.
+    assert w_high["public_equity"] < w_low["public_equity"] - 1e-6, (
+        f"adapter ignored explicit CMA: w_low={w_low.to_dict()}, w_high={w_high.to_dict()}"
+    )
+
+
 def test_weights_returned_are_a_copy():
     a = RiskfolioAdapter(_config())
     _fit(a)

@@ -1,0 +1,36 @@
+# Capital market assumptions (Phase 5).
+#
+# Initial values replicate the prior placeholder fallback
+# (_DEFAULT_VOL_ANNUAL + identity correlations + zero expected returns)
+# so the cutover from code-side fallback to config-side CMA is structural,
+# not numerical — reproducibility hashes and ledger contents stay byte-stable
+# at the cutover. Real calibration is a separate, deferred concern.
+#
+# All values are annualized. Buckets must exactly match
+# allocation.stub_weights (configs/public_allocation.yaml).
+#
+# See MODEL_DOCUMENTATION.md §Phase 5 design.
+
+expected_returns_annual:
+  cash:           0.0
+  public_bond:    0.0
+  public_equity:  0.0
+  pe_buyout:      0.0
+
+vol_annual:
+  cash:           0.005
+  public_bond:    0.04
+  public_equity:  0.16
+  pe_buyout:      0.20
+
+correlations:
+  cash:           { cash: 1.0, public_bond: 0.0, public_equity: 0.0, pe_buyout: 0.0 }
+  public_bond:    { cash: 0.0, public_bond: 1.0, public_equity: 0.0, pe_buyout: 0.0 }
+  public_equity:  { cash: 0.0, public_bond: 0.0, public_equity: 1.0, pe_buyout: 0.0 }
+  pe_buyout:      { cash: 0.0, public_bond: 0.0, public_equity: 0.0, pe_buyout: 1.0 }
+
+liquidity:
+  cash:           liquid
+  public_bond:    liquid
+  public_equity:  liquid
+  pe_buyout:      illiquid

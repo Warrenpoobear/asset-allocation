@@ -2,15 +2,24 @@
 
 Phase 1: minimal — run id, hashes, scenario, horizon, initial / final NAV,
 cumulative return, end-of-horizon allocation, total NAV per quarter.
+Phase 4b adds an advisory cost-aware allocator calibration section.
+Phase 5 adds a Capital Market Assumptions section.
 HTML rendering is a Phase 4 deliverable.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+import numpy as np
+import pandas as pd
 
 from aa_model.integration.ledger import QuarterlyLedger
 from aa_model.io.schemas import StudyConfig
+
+if TYPE_CHECKING:
+    from aa_model.assumptions.cma import CMA
 
 
 def write_markdown_report(
@@ -22,6 +31,7 @@ def write_markdown_report(
     config_hash: str,
     fixtures_hash: str,
     allocator_diagnostics: dict | None = None,
+    cma: CMA | None = None,
 ) -> None:
     end_nav = ledger.end_nav_by_quarter()
     initial_total = sum(ledger.initial_nav.values())
@@ -68,6 +78,58 @@ def write_markdown_report(
         for q, row in end_nav.iterrows():
             lines.append(f"| {q} | ${float(row.sum()):,.0f} |")
         lines.append("")
+
+    # Capital market assumptions (Phase 5). Emit per-bucket priors plus
+    # portfolio-level expected return / expected vol against the policy
+    # weights from configs/public_allocation.yaml. Skipped when CMA is
+    # absent (test paths that build a report without an explicit CMA).
+    # Note: CMA is NOT consumed by the cost-aware allocator's objective —
+    # it is a prior for riskfolio MV solves and a diagnostic for reports.
+    if cma is not None and not cma.expected_returns_annual.empty:
+        lines.append("## Capital market assumptions")
+        lines.append("")
+        lines.append(
+            "| bucket | expected return (annual) | volatility (annual) | liquidity |"
+        )
+        lines.append("|---|---:|---:|:---:|")
+        buckets = list(cma.expected_returns_annual.sort_index().index)
+        for b in buckets:
+            er = float(cma.expected_returns_annual[b])
+            vol = float(cma.vol_annual[b])
+            liq = (
+                str(cma.liquidity[b])
+                if (not cma.liquidity.empty and b in cma.liquidity.index)
+                else "—"
+            )
+            lines.append(f"| {b} | {er * 100:+.2f}% | {vol * 100:.2f}% | {liq} |")
+        lines.append("")
+
+        # Portfolio-level priors against the configured policy weights.
+        policy = pd.Series(cfg.allocation.stub_weights, dtype=float)
+        common = [b for b in buckets if b in policy.index]
+        if common:
+            w = policy.reindex(common).fillna(0.0).to_numpy(dtype=float)
+            er_arr = cma.expected_returns_annual.reindex(common).to_numpy(dtype=float)
+            vol_arr = cma.vol_annual.reindex(common).to_numpy(dtype=float)
+            corr_arr = cma.corr.reindex(index=common, columns=common).to_numpy(dtype=float)
+            cov_arr = np.outer(vol_arr, vol_arr) * corr_arr
+            port_er = float(w @ er_arr)
+            port_var = float(w @ cov_arr @ w)
+            port_vol = float(np.sqrt(max(port_var, 0.0)))
+            lines.append("### Portfolio priors at policy weights")
+            lines.append("")
+            lines.append(f"- expected return (annual): {port_er * 100:+.2f}%")
+            lines.append(f"- expected volatility (annual): {port_vol * 100:.2f}%")
+            lines.append("")
+
+        # Liquidity counts (when liquidity tags are present).
+        if not cma.liquidity.empty:
+            counts = cma.liquidity.value_counts().sort_index()
+            lines.append("### Liquidity bucket counts")
+            lines.append("")
+            for tag, n in counts.items():
+                lines.append(f"- {tag}: {int(n)}")
+            lines.append("")
 
     # Cost-aware allocator calibration (engine=cvxportfolio only). Emit
     # the rule-of-thumb suggested λ_norm vs the configured value, plus a

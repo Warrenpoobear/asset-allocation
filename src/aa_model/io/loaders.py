@@ -14,6 +14,7 @@ import yaml
 
 from aa_model.io.schemas import (
     BaseConfig,
+    CMAConfig,
     FixtureScenarioConfig,
     PEPacingConfig,
     PublicAllocationConfig,
@@ -34,6 +35,10 @@ def load_base_config(path: Path) -> BaseConfig:
 
 def load_public_allocation_config(path: Path) -> PublicAllocationConfig:
     return PublicAllocationConfig.model_validate(_read_yaml(path))
+
+
+def load_cma_config(path: Path) -> CMAConfig:
+    return CMAConfig.model_validate(_read_yaml(path))
 
 
 def load_spending_config(path: Path) -> SpendingConfig:
@@ -67,6 +72,7 @@ def load_study_config(base_path: Path) -> StudyConfig:
 
     base = load_base_config(base_path)
     allocation = load_public_allocation_config(root / base.allocation.config)
+    cma = load_cma_config(root / base.cma.config)
     spending = load_spending_config(root / base.spending.config)
     pe_pacing = load_pe_pacing_config(root / base.pe_pacing.config)
     scenarios = load_scenarios_config(root / base.scenarios.config)
@@ -75,6 +81,7 @@ def load_study_config(base_path: Path) -> StudyConfig:
     return StudyConfig(
         base=base,
         allocation=allocation,
+        cma=cma,
         spending=spending,
         pe_pacing=pe_pacing,
         scenarios=scenarios,
@@ -108,6 +115,7 @@ def hash_study_config(cfg: StudyConfig) -> tuple[str, str]:
     cfg_objs = [
         cfg.base.model_dump(mode="json"),
         cfg.allocation.model_dump(mode="json"),
+        cfg.cma.model_dump(mode="json"),
         cfg.spending.model_dump(mode="json"),
         cfg.pe_pacing.model_dump(mode="json"),
         cfg.scenarios.model_dump(mode="json"),

@@ -513,7 +513,24 @@ output. Each entry separates **model behavior** (what the code does) from
   requires a populated CMA. Until then, riskfolio output is only
   meaningful for testing the wiring.
 
-### L4 — Riskfolio default CMA fallback is a placeholder
+### L4 — Riskfolio default CMA fallback is a placeholder — [RESOLVED 2026-05-02, Phase 5]
+
+> **Status: RESOLVED in Phase 5.** The CMA pipeline now loads explicit
+> capital market assumptions from `configs/cma.yaml` (validated via
+> `CMAConfig`); the orchestrator builds a populated `CMA` via
+> `CMA.from_config(cfg.cma)` and hands it to every adapter's `fit()`.
+> Production runs always consume the loaded CMA. The
+> `_DEFAULT_VOL_ANNUAL` fallback in `RiskfolioAdapter` is retained as
+> a **test-only** path (gated on the empty `CMA()` default-constructed
+> sentinel) and is unreachable from any orchestrator-driven run. The
+> shipped `configs/cma.yaml` replicates the prior fallback values
+> (vols matching `_DEFAULT_VOL_ANNUAL`, identity correlations, zero
+> expected returns) so the cutover is structural — assumption surface
+> becomes config-explicit; reproducibility hashes and ledger contents
+> stay byte-stable. Real-CMA calibration is a separate concern,
+> deferred until empirical inputs are available.
+>
+> The original Phase 3a text follows for audit-trail purposes.
 
 * **Model behavior.** When called with an empty CMA, `RiskfolioAdapter`
   synthesizes annualized vols from a hard-coded per-bucket table
@@ -2925,3 +2942,83 @@ what changed, why, impact on outputs, backward-compatibility flag.
   this commit. When Phase 5 ships, output impact is zero for
   shipped configs (initial CMA values replicate defaults exactly).
 * **Backward-compatible.** Yes (design only).
+
+### 2026-05-02 — Phase 5 implementation: CMA pipeline (resolves L4)
+
+* **What.** Implements the §Phase 5 design locked one commit prior.
+  Eight surfaces touched:
+  1. **Schema** (`io/schemas.py`). New `CMAConfig` pydantic model
+     with per-cell validators (vol ≥ 0, |ER| < 1.0
+     percent-vs-decimal guard, correlations in [-1, 1], diagonal
+     == 1, symmetry within 1e-9), bucket-set agreement across the
+     three dicts, optional liquidity tags restricted to
+     `{liquid, semi_liquid, illiquid}`, and a model-level PSD check
+     on the assembled `Σ = diag(vol) · corr · diag(vol)` at fixed
+     `-1e-9` tolerance. `BaseConfig` gains `cma: _SubConfigRef` and
+     `StudyConfig` gains `cma: CMAConfig`.
+  2. **Loader** (`io/loaders.py`). New `load_cma_config(path)`;
+     `load_study_config` resolves the new sub-config and includes
+     it in the `StudyConfig`. The CMA dump goes into the
+     `config_hash` (joining base / allocation / spending / pe_pacing
+     / scenarios) so a CMA edit invalidates run reproducibility the
+     same way edits to other config-side files do.
+  3. **Cross-config validation** (`io/validation.py`). Enforces
+     `CMA.buckets == allocation.stub_weights.keys()` with a
+     missing/extra diff in the error message.
+  4. **Dataclass adapter** (`assumptions/cma.py`). New
+     `CMA.from_config(cfg)` classmethod constructs the populated
+     dataclass with sorted bucket index. Empty `CMA()` is reserved
+     as a test-only sentinel.
+  5. **`configs/cma.yaml`**. Replicates the prior
+     `_DEFAULT_VOL_ANNUAL` table (cash 0.5%, public_bond 4%,
+     public_equity 16%, pe_buyout 20%) + identity correlations +
+     zero expected returns + liquidity tags. Cutover is structural,
+     not numerical.
+  6. **`configs/base.yaml`**. Adds
+     `cma: { config: configs/cma.yaml }`.
+  7. **Orchestrator** (`integration/orchestrator.py`). Builds
+     `cma = CMA.from_config(cfg.cma)` and passes to `alloc.fit(...)`
+     and `write_markdown_report(...)`.
+  8. **Report** (`integration/report.py`). New
+     "Capital market assumptions" section with per-bucket ER / vol
+     / liquidity table; "Portfolio priors at policy weights"
+     subsection (`w_policy · expected_returns` and
+     `sqrt(w_policy.T · Σ · w_policy)`); liquidity bucket counts.
+* **Why.** Per audit verdict on the 4b calibration ship —
+  allocation engines were structurally correct but still fed by
+  placeholder code-side assumptions. CMA is the next-highest-value
+  realism layer: validated, explicit, reproducible. Resolving L4
+  closes the placeholder lineage and unblocks future calibration
+  work (real correlations, calibrated expected returns, vol cones)
+  as a separate concern.
+* **CMA is NOT consumed by the cost-aware allocator.**
+  `CvxportfolioAllocator.target_at` is unchanged; its objective
+  remains `λ_norm · ||(w − w_policy) · V_total||² + cost · ||trade||₁`
+  with no CMA inputs. Surfacing CMA in a cost-aware-with-Sharpe
+  variant is a Phase 6+ task that requires explicit objective
+  reformulation, design review, and new anchor tests.
+* **Tests added (15).** `tests/test_cma_loader.py` covers all
+  validation rules — round-trip, negative vol, NaN expected
+  return, percent-vs-decimal guard, out-of-range correlation,
+  asymmetry, diagonal != 1, cross-config bucket mismatch, non-PSD
+  matrix (constructed counter-example with pairwise valid
+  correlations), liquidity optional + invalid-tag + bucket-mismatch,
+  shipped `configs/cma.yaml` round-trip + alignment.
+  `test_riskfolio_consumes_explicit_cma_not_fallback` pins that
+  the adapter actually uses the loaded vols (not the placeholder
+  fallback) by varying public-equity vol and observing the MinRisk
+  weight respond.
+  `test_report_contains_capital_market_assumptions_section`
+  exercises the end-to-end report rendering.
+* **Impact on outputs.** Zero numerical change on shipped configs
+  — the new CMA YAML matches the prior fallback values exactly
+  (tested by `test_riskfolio_*` adapter tests still passing
+  bit-for-bit). `report.md` gains the "Capital market assumptions"
+  section. `ledger.parquet` and `manifest.json` are byte-stable.
+  **141 tests pass** (was 126). 15 new tests; zero regressions.
+* **Backward-compatible.** Yes for adapter behavior; **breaking**
+  for any out-of-tree `base.yaml` that omits the new `cma` key
+  (pydantic `extra=forbid` will fail validation loudly — same
+  pattern Phase 4a used when removing
+  `forecast_quarterly_return_pct`). All in-tree configs and
+  fixtures are updated.

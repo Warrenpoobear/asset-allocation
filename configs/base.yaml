@@ -30,6 +30,9 @@ implementation:
   engine: stub
   bps_per_trade: 0.0
 
+cma:
+  config: configs/cma.yaml
+
 spending:
   config: configs/spending.yaml
 

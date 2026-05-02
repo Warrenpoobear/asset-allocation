@@ -40,6 +40,19 @@ def validate_study_config(cfg: StudyConfig) -> None:
     stub_buckets = set(cfg.allocation.stub_weights)
     nav_buckets = set(cfg.fixture_scenario.nav_initial)
 
+    # CMA bucket alignment (Phase 5). The CMAConfig validator already
+    # ensures internal consistency; here we enforce that the CMA covers
+    # exactly the allocation bucket universe.
+    cma_buckets = set(cfg.cma.expected_returns_annual.keys())
+    missing_cma = stub_buckets - cma_buckets
+    extra_cma = cma_buckets - stub_buckets
+    if missing_cma or extra_cma:
+        raise ValueError(
+            "CMA bucket set does not match allocation.stub_weights — "
+            f"missing in CMA: {sorted(missing_cma)}, "
+            f"extra in CMA: {sorted(extra_cma)}"
+        )
+
     missing = stub_buckets - nav_buckets
     if missing:
         raise ValueError(

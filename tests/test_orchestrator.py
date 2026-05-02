@@ -124,6 +124,26 @@ def test_cvxportfolio_engine_preserves_invariants_under_nonzero_bps(
     assert 0.0 < cum_cost < 1_000_000.0
 
 
+def test_report_contains_capital_market_assumptions_section(base_config_path):
+    """Phase 5: report.md gains a 'Capital market assumptions' section
+    rendered from the loaded CMA. Skipped when CMA is absent (test
+    paths) — covered here because the default base.yaml ships with a
+    CMA reference.
+    """
+    result = run_orchestrator(base_config_path, dry_run=False)
+    text = (result.output_dir / "report.md").read_text(encoding="utf-8")
+    assert "## Capital market assumptions" in text
+    # Per-bucket header table.
+    assert "expected return (annual)" in text
+    assert "volatility (annual)" in text
+    # Portfolio-level prior block.
+    assert "Portfolio priors at policy weights" in text
+    assert "expected return (annual):" in text
+    assert "expected volatility (annual):" in text
+    # Liquidity counts (shipped CMA has liquidity tags).
+    assert "Liquidity bucket counts" in text
+
+
 def test_cvxportfolio_allocation_engine_preserves_invariants_end_to_end(
     with_cvxportfolio_allocation_config,
 ):
