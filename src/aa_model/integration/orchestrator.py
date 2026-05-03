@@ -512,13 +512,17 @@ def _build_ledger(
             manifest_version=cfg.position_ingestion.manifest_version,
         )
 
-        # Phase 20 / L20: reconcile next-12m capital-call obligation from all
+        # Phase 20/21 / L20: reconcile next-12m capital-call obligation from all
         # available sources. Precedence: explicit_config > cashflow_workbook >
-        # pe_pacing_model > unavailable. When both workbook and PE pacing are
-        # available, a per-quarter delta is computed regardless of which source
-        # wins. Blocking delta does not halt execution in Phase 20.
+        # pe_pacing_model > unavailable. Phase 21 adds configurable gate
+        # evaluation — blocking delta requires override or raises.
         from aa_model.pe.call_obligation import derive_pe_capital_call_obligation
         from aa_model.pe.call_reconciliation import reconcile_call_obligation
+        from aa_model.pe.reconciliation_gates import (
+            ReconciliationGateError,
+            ReconciliationGatesConfig,
+            evaluate_reconciliation_gate,
+        )
 
         coverage_q = pd.Period(position_manifest.as_of_date, freq="Q-DEC")
         explicit_usd = (cfg.liquidity_obligations or {}).get("next_12m_capital_calls_usd")
@@ -534,6 +538,31 @@ def _build_ledger(
             coverage_quarter=coverage_q,
             explicit_usd=explicit_usd,
         )
+
+        # Phase 21: evaluate reconciliation gate policy. Sets gate_result on
+        # call_recon_diag for the report. Raises ReconciliationGateError when
+        # gate_result.passes is False.
+        gates_cfg = ReconciliationGatesConfig.model_validate(cfg.reconciliation_gates or {})
+        override_justification = (
+            (cfg.liquidity_obligations or {})
+            .get("reconciliation_override", {})
+            .get("capital_calls")
+        )
+        gate_result = evaluate_reconciliation_gate(
+            call_recon_diag,
+            gates_cfg,
+            override_justification=override_justification,
+        )
+        call_recon_diag.gate_result = gate_result
+        if not gate_result.passes:
+            raise ReconciliationGateError(
+                f"capital-call reconciliation gate ({gate_result.gate_action}): "
+                f"delta classified as {gate_result.delta_classification} "
+                f"(threshold_triggered={gate_result.threshold_triggered}); "
+                f"set liquidity_obligations.reconciliation_override.capital_calls "
+                f"with a justification string to proceed"
+            )
+
         pe_call_obligation_usd: float | None = call_recon_diag.next_12m_capital_calls_usd
 
         liquidity_coverage_result = _run_liquidity_coverage(

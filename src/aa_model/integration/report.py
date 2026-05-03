@@ -1169,6 +1169,24 @@ def write_markdown_report(
         all_advisories = list(pe.advisories) + d20.advisories
         if all_advisories:
             lines.append(f"  ADVISORIES ({len(all_advisories)}): " + "; ".join(all_advisories))
+        # Phase 21: gate evaluation result subsection.
+        if d20.gate_result is not None:
+            gr = d20.gate_result
+            lines.append("")
+            lines.append("### Reconciliation gate (Phase 21)")
+            lines.append("")
+            lines.append(f"  gate_action:               {gr.gate_action}")
+            lines.append(f"  delta_classification:      {gr.delta_classification}")
+            lines.append(f"  threshold_triggered:       {gr.threshold_triggered}")
+            lines.append(f"  passes:                    {gr.passes}")
+            if gr.override_applied:
+                lines.append("  override_applied:          yes")
+                lines.append("  override_justification:    [justification provided]")
+            if gr.advisories:
+                lines.append(
+                    f"  gate_advisories ({len(gr.advisories)}): "
+                    + "; ".join(gr.advisories)
+                )
         lines.append("")
         lines.append(
             "_Capital calls are derived from the cash-flow worksheet (primary) "

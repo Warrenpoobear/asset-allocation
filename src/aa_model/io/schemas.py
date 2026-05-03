@@ -1113,6 +1113,12 @@ class StudyConfig(BaseModel):
     # Stored as raw dict; validated as LiquidityCoverageConfig by the
     # orchestrator at run time. Consumed only when position_ingestion is set.
     liquidity_coverage_config: dict | None = None
+    # Phase 21 / L20: configurable reconciliation gate thresholds and actions.
+    # Stored as raw dict; validated as ReconciliationGatesConfig by the
+    # orchestrator at run time. Consumed only when position_ingestion is set.
+    # Default None → ReconciliationGatesConfig defaults apply (blocking →
+    # requires_override).
+    reconciliation_gates: dict | None = None
 
     @model_validator(mode="after")
     def _phase12_spending_base_cross_config(self) -> StudyConfig:

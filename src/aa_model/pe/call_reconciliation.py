@@ -1,4 +1,4 @@
-"""Phase 20 / L20 — PE call-obligation reconciliation to the cash-flow worksheet.
+"""Phase 20/21 / L20 — PE call-obligation reconciliation to the cash-flow worksheet.
 
 Reconciles next_12m_capital_calls_usd from three sources in precedence order:
 
@@ -12,16 +12,25 @@ deterministic cross-check. When both workbook and PE pacing are available,
 a per-quarter reconciliation delta is computed regardless of which source wins.
 
 T4 boundary preserved: calls are never inferred from unfunded_commitment_usd
-× heuristic. Blocking delta classification does not halt execution in Phase 20.
+× heuristic.
+
+Phase 21 adds WorkbookCallReconciliationDiagnostics.gate_result for carrying
+the ReconciliationGateResult from evaluate_reconciliation_gate into the report.
+Gate evaluation and enforcement live in reconciliation_gates.py and the
+orchestrator respectively — not here.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 import pandas as pd
 
 from aa_model.pe.call_obligation import PECallObligationBridgeDiagnostics
+
+if TYPE_CHECKING:
+    from aa_model.pe.reconciliation_gates import ReconciliationGateResult
 
 
 @dataclass
@@ -58,6 +67,10 @@ class WorkbookCallReconciliationDiagnostics:
     delta_classification: str  # "advisory" | "warning" | "blocking" | "n/a"
 
     advisories: list[str] = field(default_factory=list)
+
+    # Phase 21: gate evaluation result — set by the orchestrator after calling
+    # evaluate_reconciliation_gate. None until gate evaluation runs.
+    gate_result: ReconciliationGateResult | None = field(default=None)
 
 
 def aggregate_workbook_capital_calls(

@@ -11060,3 +11060,145 @@ tests/test_phase20_pe_call_reconciliation.py     (new, synthetic only)
 * No StudyConfig schema changes.
 * No legal/tax/entity-governance inference.
 * No L20 full resolution.
+
+---
+
+## Phase 21 design-lock — reconciliation gates / policy thresholds
+
+**Commit:** Phase 21 / L20
+
+### Motivation
+
+Phase 20 classified workbook-vs-PE-pacing deltas as advisory/warning/blocking
+but treated all four as informational. Phase 21 binds configurable gate actions
+to those classifications, allowing a blocking delta to require an explicit
+written justification before the run proceeds.
+
+### Gate severity hierarchy
+
+| Level | Behavior |
+|---|---|
+| `advisory` | Delta in report; run continues |
+| `warning` | Prominent advisory; run continues |
+| `requires_override` | Run halts unless justification string provided |
+| `hard_fail` | Run always halts; no override accepted |
+
+Default mapping: advisory→advisory, warning→warning, blocking→requires_override.
+`hard_fail` is opt-in only; never the default.
+
+### Default policy
+
+```yaml
+reconciliation_gates:
+  warning_pct: 0.10
+  blocking_pct: 0.25
+  warning_usd: null
+  blocking_usd: null
+  blocking_action: requires_override
+  warning_action: warning
+  require_call_source: false
+```
+
+### Threshold trigger
+
+A delta triggers the blocking gate if EITHER `blocking_pct` is exceeded OR
+`blocking_usd` is exceeded (max(percent, dollar)). Dollar thresholds are
+`null` by default — effectively percentage-only until the user configures a
+floor. Same logic for warning thresholds. `threshold_triggered` field records
+which condition fired: `"pct"` | `"usd"` | `"both"` | `"source_missing"` |
+`"none"`.
+
+### explicit_config bypass
+
+When `source_used == "explicit_config"`, gate enforcement is bypassed — no
+justification string required, no halt. The reconciliation delta is still
+computed and reported. Rationale: the user has already asserted the obligation
+value; requiring a second justification is redundant friction.
+
+### Override mechanism
+
+```yaml
+liquidity_obligations:
+  reconciliation_override:
+    capital_calls: "justification string"
+```
+
+The justification string is stored verbatim in `ReconciliationGateResult`
+and captured in diagnostics. An empty or whitespace-only string is treated
+as not provided. The report redacts the raw text to `[justification provided]`
+to avoid committing sensitive detail.
+
+### hard_fail vs requires_override
+
+`blocking_action: "hard_fail"` raises even when an override justification is
+present. These are distinct policy modes: `requires_override` gives the user
+an escape hatch; `hard_fail` does not.
+
+### require_call_source
+
+When `require_call_source: true`, `source_used == "unavailable"` itself
+triggers the blocking gate (threshold_triggered="source_missing"). Default
+`false` — missing source remains advisory.
+
+### Architecture
+
+`evaluate_reconciliation_gate(recon_diag, gates_cfg, override_justification)`
+is a pure function that returns `ReconciliationGateResult`. The orchestrator
+raises `ReconciliationGateError` when `gate_result.passes` is False. Gate
+logic is testable without side effects.
+
+`WorkbookCallReconciliationDiagnostics.gate_result` carries the
+`ReconciliationGateResult` into the report after gate evaluation.
+
+### L20 resolution
+
+L20 is not fully resolved by Phase 21. Resolution requires:
+1. Phase 21 gates operational (complete with this commit).
+2. A live workbook run producing `source_used="cashflow_workbook"` in the
+   report — confirming `category="capital_call"` is implemented in the local
+   manifest. Synthetic gate tests cannot confirm worksheet alignment.
+
+### Key schemas and functions
+
+```
+src/aa_model/pe/reconciliation_gates.py          (new)
+    ReconciliationGatesConfig (Pydantic)
+    ReconciliationGateResult (dataclass)
+    ReconciliationGateError (ValueError subclass)
+    evaluate_reconciliation_gate(recon_diag, gates_cfg, override_justification)
+        → ReconciliationGateResult
+
+src/aa_model/pe/call_reconciliation.py
+    WorkbookCallReconciliationDiagnostics.gate_result field added
+
+src/aa_model/io/schemas.py
+    StudyConfig.reconciliation_gates: dict | None = None
+
+src/aa_model/integration/orchestrator.py
+    Gate evaluation block after reconcile_call_obligation
+    ReconciliationGateError raised when gate_result.passes is False
+
+src/aa_model/integration/report.py
+    ### Reconciliation gate (Phase 21) subsection
+
+tests/test_phase21_reconciliation_gates.py       (new, synthetic only)
+```
+
+### Test discipline
+
+* advisory delta passes.
+* warning delta passes with advisory.
+* blocking delta without override → passes=False; raises ReconciliationGateError.
+* blocking delta + override → passes=True; override_applied=True.
+* unavailable source: require_call_source controls gate behavior.
+* default configs byte-stable (gate not evaluated when position_ingestion=None).
+* 6 tests total. All 17/18/19/20/21 targeted tests: 35/35 green.
+  Full suite: 298 green (4 pre-existing cvxportfolio failures unrelated).
+
+### Out of scope for Phase 21
+
+* No hard blocking gate by default (opt-in only).
+* No Monte Carlo.
+* No workbook mutation.
+* No legal/tax/entity-governance inference.
+* No L20 full resolution (requires live workbook run).
