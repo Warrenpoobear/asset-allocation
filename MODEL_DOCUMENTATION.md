@@ -11660,14 +11660,38 @@ Decision guide for `proposed_action`:
 
 Trigger: user sends `go — validate completed pilot row-classification worksheet`.
 
-Claude will:
-1. Read the completed pilot CSV (no values, no labels surfaced in chat).
-2. Translate filled `classify` rows into `RowClassificationRule` entries.
-3. Apply rules to the 33 unclassified entity sheets in the local manifest.
-4. Run live ingestion → report new `unmatched_lines_count` and category
-   breakdown (aggregate counts only — no labels or values in chat).
-5. Flag any rows where the pattern produced 0 matches (possible typo or
-   case mismatch).
+**Validation pass (must complete before manifest injection):**
+
+1. **No remaining TODOs** — all `classify` rows must have `proposed_action`,
+   `direction`, `distributable_candidate`, `restricted`, `recurrence_type`,
+   `certainty`, and `domain` filled. Any row still marked TODO or left blank
+   blocks injection; report count and sheet index only.
+
+2. **Enum validation** — each field value must be a member of its schema
+   enum. Invalid values block injection; report field name and row index
+   only (no label content).
+
+3. **Exclude/ignore integrity** — rows with `proposed_action == exclude`
+   or `ignore` must carry no economic classification values
+   (`direction`, `distributable_candidate`, `restricted`, `domain` must
+   all be blank/default). A filled economic field on an excluded row is
+   a data-entry error; report row index only.
+
+4. **Output discipline** — validation output contains aggregate counts and
+   row indices only. No row labels, no entity names, no dollar values
+   appear in chat at any point in this phase.
+
+Only after all four checks pass:
+
+5. Translate `classify` rows into `RowClassificationRule` entries.
+6. Apply rules to the 33 unclassified entity sheets in the local manifest.
+7. Run live ingestion → report new `unmatched_lines_count` and category
+   breakdown (aggregate counts only).
+8. **Capital-call regression check** — confirm `source_used="cashflow_workbook"`
+   and `capital_call` count ≥ 24 (regression on L20 path). Broader
+   row-classification changes must not displace the capital-call lines.
+9. Flag any `classify` rows where the pattern produced 0 ingestion matches
+   (likely typo or case mismatch) — report row index and sheet only.
 
 **Phase C — Iteration**
 
