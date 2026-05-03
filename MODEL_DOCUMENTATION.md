@@ -6475,6 +6475,36 @@ wb = load_workbook(
   (``IngestionDiagnostics.workbook_hash``) — provenance + cache key
   for downstream reuse.
 
+> **Reviewer tightening 1 — stale formula / cache risk.** Because
+> openpyxl reads with ``data_only=True``, **the ingestor consumes
+> the cell values that Excel cached the last time the workbook was
+> opened, recalculated, and saved**. If the workbook was edited
+> externally (a script, a programmatic edit, another tool) and the
+> formulas were never recalculated by Excel, the ingestor will read
+> stale cached values without warning. This is an unavoidable
+> consequence of the read-only contract — Phase 14 does not
+> evaluate formulas because doing so would require either an
+> Excel runtime (Windows / COM only) or a third-party formula
+> engine (added complexity + correctness risk).
+>
+> The mitigation is a **standing CAVEAT** in the report's
+> ``## Workbook ingestion (advisory)`` section, rendered on every
+> ingestion run regardless of whether staleness is detected:
+>
+> ```text
+> CAVEAT: Workbook ingestion uses cached formula values
+> (openpyxl data_only=True). If the workbook was edited but not
+> recalculated and saved in Excel, ingested values may be stale.
+> Open the workbook in Excel, allow it to recalculate, save,
+> then re-run ingestion before relying on the output.
+> ```
+>
+> ``IngestionDiagnostics.formula_cache_caveat`` carries the same
+> text so a programmatic consumer can surface it equivalently.
+> The board-snapshot reconciliation deltas (advisory only — see
+> reviewer tightening 3) are the implicit detection signal: if
+> aggregates disagree, suspect stale cache first.
+
 ### Workbook manifest
 
 The workbook structure can drift (sheet renames, new entities,
@@ -6488,12 +6518,35 @@ class WorkbookManifestConfig(BaseModel):
     """
 
     model_config = _STRICT
-    workbook_version: str                # e.g., "v7"; matched against
-                                         # the manifest's expected_version
-                                         # at load time
-    expected_workbook_filename: str      # "Cashflow Modeling v7.xlsx"
+    # Phase 14 reviewer tightening 2: workbook_version is REQUIRED,
+    # URL-safe (no colons; reserved for the Phase 13 source-convention
+    # separator), and human-controlled. It anchors deterministic
+    # producer_ids (see workbook_lines_to_producer_config below).
+    # workbook_hash is captured for provenance but is NOT included
+    # in producer_id — hash-based ids would change every workbook
+    # edit, breaking cross-run audit. Version-controlled ids are
+    # better for board / forecast vintages.
+    workbook_version: str = Field(min_length=1)
+    expected_workbook_filename: str = Field(min_length=1)
+                                         # "Cashflow Modeling v7.xlsx"
                                          # — matched against the supplied
                                          # path's basename for provenance
+
+    @field_validator("workbook_version")
+    @classmethod
+    def _version_url_safe(cls, v: str) -> str:
+        # Same URL-safety discipline as Phase 13 producer_ids /
+        # entity_ids — colons are reserved for the Phase 13
+        # source-convention separator (distribution:<domain>:<id>),
+        # and producer_id concatenates workbook_version with
+        # sheet/row/quarter via "__". A colon in workbook_version
+        # would silently corrupt the source-convention parse on
+        # downstream by-source rollups.
+        if ":" in v:
+            raise ValueError(
+                f"workbook_version must be URL-safe (no colons); got {v!r}"
+            )
+        return v
 
     # Sheet roles. Each role maps to a list of sheet names. An
     # ingestion run reads ONLY the sheets named here; sheets not
@@ -6757,6 +6810,24 @@ Codified per the user prompt and the standing principle:
 | Manifest version | Captured into ``IngestionDiagnostics.manifest_version`` |
 | Stale-formula heuristic | If family-aggregate roll-up cells differ from the entity-sum by more than the documented tolerance, flag in ``IngestionDiagnostics.stale_formula_warnings`` |
 
+> **Reviewer tightening 3 — board-snapshot reconciliation is
+> ADVISORY ONLY.** Phase 14 ingestion never fails ingestion or
+> blocks a downstream run on a board-snapshot reconciliation
+> delta. Reconciliation deltas surface as WARNING entries in the
+> report's ``## Workbook ingestion (advisory)`` section and are
+> recorded in
+> ``IngestionDiagnostics.board_snapshot_reconciliations``. There
+> is **no strict-mode flag** in Phase 14; a future phase may
+> introduce one if the reviewer judges that hard validation is
+> wanted, but it is explicitly out of scope here.
+>
+> The rationale: reconciliation deltas can stem from (a) stale
+> formula cache (reviewer tightening 1), (b) the workbook's
+> snapshot-tab maintenance lagging the entity sheets, (c) genuine
+> arithmetic discrepancies the human author needs to investigate.
+> All three are upstream-author concerns. Phase 14's job is to
+> surface them with provenance, not to refuse to run.
+
 ### Outputs
 
 ```python
@@ -6886,6 +6957,24 @@ Warning bands:
 
 ### Tests planned (12)
 
+> **Reviewer tightening 4 — tests use synthetic workbook fixtures
+> ONLY.** Phase 14 tests construct their own minimal openpyxl
+> workbooks programmatically at test time (in ``tmp_path``) using
+> the openpyxl write API, then exercise the ingestor against
+> those synthetic fixtures. **No real workbook rows, live values,
+> sheet extracts, person names, entity names, or forecast tables
+> are committed into ``tests/`` or anywhere else in the repo.**
+> The real ``Cashflow Modeling v7.xlsx`` is used for local
+> validation runs only — never for committed test data. This
+> mirrors the PROJECT_SCOPE.md §5.3 discipline: live data stays
+> outside the repo.
+>
+> The test file accordingly avoids any committed binary fixture
+> files. Synthetic builders live in the test module itself
+> (``tests/test_phase14_workbook_ingestion.py``); each test
+> constructs the workbook it needs, exercises the ingestor, then
+> cleans up via ``tmp_path``.
+
 Schema (3):
 
 1. ``EntityRecord`` rejects entity_id with colons; accepts the full
@@ -6975,29 +7064,49 @@ End-to-end (1):
 
 ### L19 status under Phase 14
 
-Phase 14 is the **last gate** between PARTIALLY RESOLVED and
-RESOLVED for L19. After Phase 14 implementation lands AND a
-validation pass against the live workbook reconciles within the
-documented tolerance, L19 flips to RESOLVED.
+> **Reviewer guidance — do not overclaim.** L19 stays at
+> ``[PARTIALLY RESOLVED]`` after Phase 14 implementation alone.
+> The conditions for flipping to ``[RESOLVED]`` are conservative:
+>
+> 1. Workbook-driven ``distribution_inflow`` producer exists and
+>    passes the Phase 14 test suite.
+> 2. The real ``Cashflow Modeling v7.xlsx`` validates cleanly
+>    locally (board-snapshot reconciliation deltas within tolerance,
+>    no material unmatched lines, no stale-formula warnings, the
+>    SFO end-to-end run succeeds).
+> 3. The MODEL_DOCUMENTATION wording makes explicit that legal /
+>    tax / entity-governance distributability remains outside model
+>    scope.
+>
+> Even when all three conditions hold, the resolution wording must
+> be narrow:
+>
+> ```
+> L19 — RESOLVED for modeled distributable-income ingestion;
+> legal / tax / entity-governance distributability remains
+> out of scope.
+> ```
 
-Recommended status text on Phase 14 implementation (subject to
-reviewer tightening):
+L19 status text on Phase 14 *implementation alone* (no live-workbook
+validation run yet):
 
 ```
-L19 — RESOLVED, Phase 12 + 12.5 + 13 + 14.
+L19 — PARTIALLY RESOLVED, Phase 12 + 12.5 + 13 + 14.
 Spending-rule denominator infrastructure complete (Phase 12 + 12.5).
-Producer-side seat shipped (Phase 13 config-driven, Phase 14
-workbook-driven). The model can now run end-to-end on the
-household's actual operating cash-flow forecast. Phase 14 does
-not determine legal / tax / entity-governance distributability —
-the workbook is the source of truth for those classifications.
+Producer-side seat shipped: config-driven (Phase 13) and workbook-
+driven (Phase 14). Workbook ingestion is implemented and
+synthetic-fixture tested; L19 flips to RESOLVED only after a clean
+local validation pass against the real Cashflow Modeling v7.xlsx
+(board-snapshot reconciliation, no material unmatched lines, no
+stale-formula warnings). Legal / tax / entity-governance
+distributability remains out of scope and will not be modeled.
 ```
 
-If the live-workbook validation pass surfaces material
-reconciliation deltas or unmatched lines that block end-to-end
-runs, L19 stays at PARTIALLY RESOLVED until the reconciliation is
-clean. Reviewer judgment on the threshold for "clean enough to
-flip" is expected.
+The Phase 14 implementation commit therefore leaves L19 at
+PARTIALLY RESOLVED. Promotion to RESOLVED is **operational** —
+follows a successful local validation run, not the implementation
+commit itself. A separate docs-only commit can flip the wording
+once the reviewer confirms the validation pass.
 
 ### Locked design choices
 
@@ -7034,23 +7143,42 @@ flip" is expected.
   (``workbook_lines_to_producer_config``); the ingestor returns
   the broader ``IngestionResult`` and the bridge is invoked
   explicitly by the orchestrator.
-* ``producer_id`` for workbook-derived entries is deterministic:
-  ``f"{workbook_version}__{sheet_name}__{row_label}__{quarter}"``
-  — same workbook + same manifest → same producer_ids.
-* Board-snapshot reconciliation is the validation primitive;
-  abs-Δ% > 0.5% surfaces a WARNING.
+* ``producer_id`` for workbook-derived entries is deterministic
+  and **uses ``workbook_version`` only**, not ``workbook_hash``
+  (reviewer tightening 2): ``f"{workbook_version}__{sheet_name}__{row_label}__{quarter}"``.
+  Hash is captured separately for provenance; using it in
+  producer_id would break cross-run audit on every workbook edit.
+* ``workbook_version`` is REQUIRED on ``WorkbookManifestConfig``,
+  URL-safe (no colons), human-controlled (reviewer tightening 2).
+* Board-snapshot reconciliation is **advisory only** (reviewer
+  tightening 3): abs-Δ% > 0.5% surfaces a WARNING; ingestion never
+  fails on a reconciliation delta. No strict-mode flag in Phase 14.
 * New report section ``## Workbook ingestion (advisory)``;
-  composes with the Phase 12.5 + Phase 13 advisory sections.
+  composes with the Phase 12.5 + Phase 13 advisory sections;
+  carries a standing CAVEAT line about cached-formula stale-state
+  risk (reviewer tightening 1) on every ingestion run.
+* ``IngestionDiagnostics.formula_cache_caveat`` carries the same
+  CAVEAT text for programmatic consumers (reviewer tightening 1).
 * Default-off byte-stability: ``cfg.workbook_ingestion = None``
   ⇒ no ingestion ⇒ Phase 13 trajectories byte-identical.
 * Phase 14 does NOT mutate the workbook; does NOT determine
   legal / tax / entity-governance distributability; does NOT
   copy live values into ``MODEL_DOCUMENTATION.md`` or any
   committed artifact.
-* L19 status flips to RESOLVED on Phase 14 implementation IFF
-  the live-workbook validation pass reconciles cleanly.
-  Otherwise stays at PARTIALLY RESOLVED until the reconciliation
-  is clean. Reviewer-tightening guidance expected.
+* **Tests use synthetic workbook fixtures only** (reviewer
+  tightening 4). Each test builds its own minimal openpyxl
+  workbook in ``tmp_path`` via the openpyxl write API and
+  exercises the ingestor against it. The real
+  ``Cashflow Modeling v7.xlsx`` is used for local validation only;
+  no real rows / values / sheet extracts / person or entity
+  names are committed under ``tests/``.
+* L19 stays at ``[PARTIALLY RESOLVED]`` after Phase 14
+  implementation alone. Promotion to RESOLVED is **operational**:
+  requires a clean local validation pass against the real workbook
+  AND wording narrowed to "RESOLVED for modeled distributable-
+  income ingestion; legal / tax / entity-governance
+  distributability remains out of scope." A separate docs-only
+  commit performs that flip after the reviewer confirms.
 
 ---
 
