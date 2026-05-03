@@ -11202,3 +11202,47 @@ tests/test_phase21_reconciliation_gates.py       (new, synthetic only)
 * No workbook mutation.
 * No legal/tax/entity-governance inference.
 * No L20 full resolution (requires live workbook run).
+
+### 2026-05-03 — docs(phase-14): cross-walk workflow doc (workbook → manifest)
+
+* **What.** Adds `docs/phase_14_workbook_crosswalk_workflow.md` as a generic,
+  reusable operational guide for turning the committed scaffold
+  (`configs/workbook_v7_manifest.yaml`) into a locally-classified, runnable
+  workbook ingestion. The doc carries no live data (no real sheet names, no
+  row labels, no person/entity identifiers, no values).
+* **Why.** The workflow had been re-derived ad-hoc across multiple sessions
+  from chat history. Memorializing it as a tracked doc means future sessions
+  inherit the steps, the privacy posture, the schema reference, the
+  open-risks template, and the L19/L20 resolution gates without re-deriving
+  anything.
+* **Coverage.**
+  - Six-step workflow: discovery probe → cross-walk → local manifest → row
+    classification → schema validation → pilot ingestion.
+  - Phase 14.2 discovery-scraper invocation (`local_private` vs
+    `privacy_safe` modes).
+  - Schema reference (entity_type / cash_flow_role / layout_type /
+    direction / domain / recurrence_type / certainty / period_header_format
+    enum values + hard constraints).
+  - Recommended cross-walk artifact set under `data/external/` (gitignored):
+    layout summary, row-label inventory, sheet→entity table,
+    mapping_crosswalk markdown.
+  - Per-sheet `header_row_index` override pattern (for layout outliers
+    where a sheet's header row differs from the manifest default).
+  - Standing principles list (NAV is not liquidity; upstream classification
+    only; worksheet is the spine; etc.).
+  - Open-risks template (layout outliers, entity-type ambiguity, joint vs
+    individual, project rollup vs entity, capital vs operating LLC,
+    aggregate snapshot mis-classification).
+  - Phase 14 → Phase 13 producer convention reminder
+    (`distribution:<domain>:<id>`,
+    `producer_id = f"{workbook_version}__{sheet_name}__{row_label}__{quarter}"`).
+  - L19 / L20 resolution gates (live-workbook validation requirements,
+    `source_used = "cashflow_workbook"` for the Phase 20 reconciliation).
+* **Out of scope.** No code changes. No scaffold changes. No
+  classification rules. No live workbook content.
+* **Backward-compatible.** Yes — pure documentation addition. Default
+  configs and trajectories byte-identical.
+* **L19 / L20.** Both held at PARTIALLY RESOLVED. The doc is the
+  prerequisite write-up for the operational milestones; the milestones
+  themselves (locally-authored manifest + clean live ingestion run) are
+  not affected by this commit.
