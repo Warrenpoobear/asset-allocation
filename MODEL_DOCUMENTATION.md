@@ -10797,3 +10797,135 @@ tests/test_phase18_spending_base_bridge.py   (synthetic fixtures only)
 * No changes to ``StudyConfig`` fields.
 * No new ``OwlRule`` accessor methods — reconstruction from diagnostics dict
   only.
+
+---
+
+## Phase 19 design-lock — PE pacing → next-12m capital-call obligation bridge
+
+**Commit:** (Phase 19)
+**Status:** LOCKED
+
+### Problem
+
+``capital_call_coverage`` is always ``n/a`` in study runs because
+``LiquidityObligationConfig.next_12m_capital_calls_usd`` has no
+deterministic source. Phase 16 T4 explicitly refused to infer calls
+from static unfunded commitments. The right source — deterministic
+forward PE pacing projections — was already computed in ``_build_ledger``
+but not wired into the liquidity coverage layer.
+
+### Solution
+
+New module ``pe/call_obligation.py`` with a pure function
+``derive_pe_capital_call_obligation`` that sums projected ``call_usd``
+from ``pe_proj`` over the next-4-quarter window following the position
+snapshot ``as_of_date``. The result is threaded into
+``_run_liquidity_coverage`` via a new ``pe_call_obligation_usd``
+parameter, populating ``LiquidityObligationConfig.next_12m_capital_calls_usd``
+deterministically.
+
+### Coverage measurement quarter
+
+``pd.Period(position_manifest.as_of_date, freq="Q-DEC")`` — the quarter
+enclosing the position snapshot. No new config field required. The
+next-12m window is ``coverage_quarter+1`` through ``coverage_quarter+4``.
+
+### pe_proj schema
+
+Tidy frame from ``PEAdapter.project_horizon`` (PROJECTION_COLUMNS +
+sleeve). ``quarter`` column is a string (e.g. ``"2026Q1"``). Both TA
+and STAIRS adapters add the ``sleeve`` column.
+
+### Override precedence
+
+1. Explicit ``liquidity_obligations.next_12m_capital_calls_usd`` set by
+   user → ``source = "explicit"``. Resolved in ``_build_ledger`` before
+   calling ``derive_pe_capital_call_obligation``.
+2. PE-derived sum of ``call_usd`` for next-4-quarter window, ``> 0`` →
+   ``source = "pe_pacing"``, value populated.
+3. PE-derived sum = 0.0 → ``source = "pe_pacing"``,
+   ``next_12m_capital_calls_usd = None`` + advisory ("funds past
+   commitment period"). T4: a zero-denominator obligation is not a
+   useful coverage input; None is more honest.
+4. Empty ``pe_proj`` → ``source = "unavailable"``,
+   ``next_12m_capital_calls_usd = None`` + advisory.
+
+### T4 boundary preserved
+
+Calls are derived only from the forward pacing model projection. Static
+unfunded commitments × a percentage are never used.
+
+### Partial-horizon advisory
+
+When fewer than 4 of the next-12m window quarters appear in ``pe_proj``
+(run horizon shorter than coverage window), an advisory lists the missing
+quarters. The derived call sum covers only the projected quarters.
+
+### PECallObligationBridgeDiagnostics
+
+``source``, ``coverage_quarter``, ``quarters_included``,
+``quarters_in_horizon``, ``fund_count``, ``calls_by_quarter``,
+``top_contributors`` (top 5 fund/call pairs), ``advisories``.
+
+### Orchestrator wiring
+
+``_build_ledger`` 11th return element: ``pe_call_bridge_diag``.
+``run_orchestrator`` unpacks 11 elements and passes
+``pe_call_bridge_diag`` to ``write_markdown_report``.
+
+``_run_liquidity_coverage`` new parameter: ``pe_call_obligation_usd``.
+When not ``None``, injected into ``LiquidityObligationConfig`` dict
+before validation (precedence already resolved by ``_build_ledger``).
+
+### Report section
+
+``## PE capital-call obligation bridge (Phase 19, advisory)`` rendered
+for all three source values when ``pe_call_bridge_diag is not None``.
+Shows source, coverage quarter, per-quarter call breakdown, top
+contributors, and advisories.
+
+### Default-off byte-stability
+
+``pe_call_bridge_diag = None`` when ``cfg.position_ingestion is None``.
+Pre-Phase-17 trajectories unchanged.
+
+### Key schemas and functions
+
+```
+src/aa_model/pe/call_obligation.py               (new)
+    PECallObligationBridgeDiagnostics
+    derive_pe_capital_call_obligation(pe_proj, coverage_quarter)
+        → PECallObligationBridgeDiagnostics
+
+src/aa_model/integration/orchestrator.py
+    _run_liquidity_coverage (pe_call_obligation_usd param added)
+    _build_ledger (Phase 19 wiring; 11-element return tuple)
+    run_orchestrator (unpacks 11; passes pe_call_bridge_diag to report)
+
+src/aa_model/integration/report.py
+    write_markdown_report (pe_call_bridge_diag param)
+    ## PE capital-call obligation bridge section
+
+tests/test_phase19_pe_call_obligation.py         (new, synthetic only)
+```
+
+### Test discipline
+
+* Explicit user override preserved (source="explicit").
+* PE-derived calls → ``capital_call_coverage`` finite.
+* Empty ``pe_proj`` → source="unavailable" + advisory.
+* Zero calls in window → ``None`` + advisory.
+* Same inputs → same output (deterministic contract).
+* Default configs byte-stable (bridge inactive).
+* 6 tests total. All 17/18/19 targeted tests: 23/23 green.
+  Full suite: 298 green (4 pre-existing cvxportfolio failures
+  unrelated to Phase 19).
+
+### Out of scope for Phase 19
+
+* No Monte Carlo.
+* No secondary-market or fee modeling.
+* No semi-liquid redemption modeling.
+* No ``StudyConfig`` schema changes.
+* No stochastic pacing.
+* No L20 full resolution.
