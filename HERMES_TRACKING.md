@@ -8,18 +8,21 @@
 
 ## Current State <!-- auto -->
 
-- Current phase: **Phase 18 — SpendingBaseBreakdown bridge into liquidity coverage (Phase 19 PE call-obligation underway, untracked)**
-- Latest commit: `5acfd0a` — Phase 18 / L20: SpendingBaseBreakdown bridge into liquidity coverage
-- Local HEAD: `84f97a8` — chore(lint): ruff --fix + format sweep across src/tests/scripts
-  (1 commit ahead of `origin/main`: lint sweep)
-- Branch: `main` (1 ahead, 0 behind origin)
-- Last pushed: 2026-05-03 12:06:34 -0400 (`5acfd0a`)
-- Working tree: dirty — concurrent Phase 19 work present (untracked: `src/aa_model/pe/call_obligation.py`,
-  `tests/test_phase19_pe_call_obligation.py`, `configs/_test_owl_infl*.yaml`)
-- Tests: **341 passed** (`.venv/bin/pytest -p no:warnings`; +6 from Phase 19)
-- Ruff: **4 errors** in Phase 19 untracked files only (`pe/call_obligation.py`,
-  `test_phase19_pe_call_obligation.py`); src/tests/scripts otherwise clean post-sweep at `84f97a8`
-- Latest run set: `data/processed/runs/aa-e3f09d2a2251-96451d89bace-20260503T163558Z-*`
+- Current phase: **Phase 19 landed (PE pacing → next-12m capital-call obligation, pacing-only); Phase 19.1 design-locked (workbook reconciliation)**
+- Latest commit: `e7e81ec` — docs(model): Phase 19.1 design lock — workbook capital-call reconciliation
+- Branch: `main` (0 ahead, 0 behind origin)
+- Last pushed: 2026-05-03 13:55:26 -0400 (`e7e81ec`)
+- Working tree: clean
+- Tests: **341 passed** (`.venv/bin/pytest -p no:warnings`)
+- Ruff: clean across `src tests scripts` (post-Phase-19 lint sweep at `9c250f4`)
+- Latest run set: `data/processed/runs/aa-e3f6ab2337ad-96451d89bace-20260503T175225Z-*`
+
+Recent series (5 commits since 2026-05-03 12:00 ET):
+- `e7e81ec` docs(model): Phase 19.1 design lock — workbook capital-call reconciliation
+- `9c250f4` chore(lint): ruff --fix + format sweep for Phase 19 (af58dd3)
+- `0ad2420` docs(model): Phase 19 design prompt — PE call-obligation reconciled to workbook
+- `8a150c5` docs(claude): standing constraint — worksheet-aligned spending/liquidity/PE pacing
+- `af58dd3` Phase 19 / L20: PE pacing → next-12m capital-call obligation bridge
 
 ## Open Gates
 
@@ -28,8 +31,18 @@
 - [ ] **Phase 10 L14 transaction-cost diagnostics** — partially resolved at
       `49544f7` (report section); 4 cvxportfolio-gated tests still skipped /
       ModuleNotFoundError when extra not installed.
-- [ ] **L19 spending-base realism** — explicitly out of scope for L16 fix; remains
-      open. Phase-11 caveat surfaced verbatim in Owl regime report.
+- [ ] **Phase 19.1 implementation** — design locked at `e7e81ec`
+      (`docs/phase_19_1_design_lock.md`). 5-commit implementation series
+      planned: workbook capital_call_candidate classification → source
+      taxonomy rename + reconcile fn → orchestrator + report wiring →
+      tracking sync. Closes the gap between Phase 19 (pacing-only) and the
+      standing worksheet-alignment constraint at `8a150c5`.
+- [ ] **L20 doc-line** — Phase 19 commit `af58dd3` references L20 but
+      `MODEL_DOCUMENTATION.md` does not yet have an `### L20 —` heading.
+      Author should add status line in the Phase 19.1 series.
+- [ ] **L19 spending-base realism** — partially resolved (Phase 12/12.5/13/14
+      at MODEL_DOCUMENTATION.md:1376). Remaining gap: real-workbook
+      validation pending.
 - [ ] **MODEL_DOCUMENTATION.md sweep** — confirm L16 status flips to
       `[RESOLVED 2026-05-02, Phase 11]` and that L19 caveat references are linked.
 - [ ] **Determinism check** — re-run identical inputs must produce byte-identical
@@ -51,6 +64,7 @@
 | L14 | Only linear transaction cost is modeled (partial resolve)      | 984      |
 | L17 | Cross-engine metric comparability is not meaningful            | 839      |
 | L19 | Spending-base realism — partial; pending real-workbook validation | 1376  |
+| L20 | PE call obligation — workbook reconciliation pending (Phase 19.1) | (Ph19) |
 
 ## Resolved Limitations
 
@@ -110,14 +124,13 @@ Cron jobs are registered separately in Hermes (see `cronjob list`).
 
 ### Asset Allocation Model — Status
 ```
-Current phase:        Phase 18 (SpendingBase bridge); Phase 19 PE call-obligation in-flight (untracked)
-Last pushed commit:   5acfd0a  (Phase 18)
-Local HEAD:           84f97a8  (chore(lint) sweep, +1 ahead)
+Current phase:        Phase 19 landed; Phase 19.1 design-locked (workbook reconciliation)
+Last pushed commit:   e7e81ec  (Phase 19.1 design lock)
 Tests:                341 passed
-Ruff errors:          4 (Phase 19 untracked files only; src/tests/scripts clean)
-Open limitations:     12  (L19 → PARTIALLY RESOLVED)
+Ruff errors:          0 (clean across src/tests/scripts post-Phase-19 sweep at 9c250f4)
+Open limitations:     13  (L20 added — Phase 19.1 will close)
 Resolved limitations: 7
-Next gated task:      Push Phase 14 series + L19 real-workbook validation
+Next gated task:      Phase 19.1 implementation series (5 commits per design lock)
 Last model-doc update: 2026-05-03 (L19 status under Phase 14)
 Latest run:           20260503T045900Z (crisis_correlation)
 ```
