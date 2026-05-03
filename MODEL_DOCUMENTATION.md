@@ -6352,6 +6352,708 @@ re-litigated post-implementation:
 
 ---
 
+## Phase 14 design (pre-implementation) — cash-flow workbook and entity ingestion
+
+> **One-line goal.** Ingest the operating cash-flow workbook
+> (``Cashflow Modeling v7.xlsx``) as a **read-only integration
+> target** and produce normalized entity + cash-flow tables that
+> downstream layers (Phase 13's ``DistributionProducer``, future
+> liquidity-coverage layer, board-snapshot reconciliation) consume.
+> Closes the workbook-driven half of L19 — the model can finally
+> run end-to-end on the household's actual operating forecast,
+> not just on hand-authored producer specs. **Strictly an
+> ingestion layer; does NOT change Owl math, the ledger schema,
+> the spending-base helpers, the producer ABC, or any allocator /
+> rebalancer behavior.** The workbook is **never mutated** —
+> Phase 14 has no write paths to the Excel file.
+
+### Required scope tightening — Phase 14 is the *workbook ingestor*, not a tax / legal / waterfall engine
+
+> Phase 14 reads structured Excel and emits normalized model
+> tables. It does **not** model:
+>
+> * Legal distributability of inter-entity cash
+> * Tax treatment / withholding / character
+> * Ownership waterfall mechanics
+> * Whether OpCo cash is "available" to the family office
+> * Whether appraisal NAV is spendable
+> * Any business rule the workbook does not already classify
+>
+> Phase 14 is the **plumbing**. The human spec author (in
+> ``Cashflow Modeling v7.xlsx``) owns the upstream classification
+> — same posture as Phase 12.5 reviewer tightening 1 and Phase 13
+> reviewer tightening 1. The workbook's columns mark each line as
+> ``distributable_candidate``, ``restricted``, ``recurring`` /
+> ``one_time``, etc.; Phase 14 reads the marks and writes the
+> normalized rows. It never invents a classification.
+
+| Concern | In scope? | Why |
+| --- | --- | --- |
+| ``WorkbookIngestor`` reads the Excel via ``openpyxl(read_only=True, data_only=True)`` | yes | Read-only + computed values; no formula evaluation; no mutation |
+| Pydantic ``EntityRecord`` + ``CashFlowLineRecord`` schemas | yes | Normalized model input; downstream-stable interface |
+| ``WorkbookManifestConfig`` (sheets → roles mapping) | yes | Lets the workbook structure drift without changing the ingestor |
+| Period-header parser (multiple Excel formats → ``pd.Period``) | yes | Needed for any quarter-aligned downstream consumer |
+| Subtotal / total / blank-row exclusion | yes | Excel realities — a structural ingestion concern |
+| Sign-convention normalization | yes | Workbook signs (positive=in / negative=out) → model convention |
+| Entity-id normalization | yes | Stable cross-row joining and producer-source bridging |
+| Workbook hash + manifest version capture (provenance) | yes | Reproducibility + audit trail |
+| Board-snapshot reconciliation diagnostic | yes | Validation against the human's running aggregate |
+| Bridge: workbook lines → ``DistributionProducerConfig`` candidate entries | yes | Consumes the Phase 13 producer interface unchanged |
+| ``WorkbookDrivenProducer`` adapter (engine="workbook") | yes | Phase 13 ABC commitment fulfilled |
+| Legal / tax / entity-governance engine | **no** | Workbook is the upstream classifier |
+| Full ownership waterfall | **no** | Out of scope unless design proves required (it does not) |
+| Investment Summary workbook ingestion | **no — Phase 15** | Position / account layer is a separate workbook + concern |
+| Live values / person-level data in repo docs | **no** | PROJECT_SCOPE.md §5.3 — not committed |
+| Mutation of the workbook | **no** | Read-only invariant |
+| Monte Carlo / stochastic regime | **no — L2** | Deferred per `PROJECT_SCOPE.md` §6 |
+| New ledger flow type | **no** | Workbook lines flow through Phase 13's ``distribution_inflow`` |
+
+### Diagnosis
+
+The Phase 13 boundary (commit ``efbfcf1``):
+
+```text
+Phase 13 implements the consumer-side infrastructure plus a
+config-driven producer. It does not implement the workbook-driven
+producer that ingests the SFO operating forecast.
+```
+
+Production runs that select ``spending_base="distributable_income"``
+require a populated ``DistributionProducerConfig``. Hand-authoring
+the spec is fine for research / synthetic runs but does not match
+how the household's forecast actually lives — in
+``Cashflow Modeling v7.xlsx``, with quarterly rows per entity,
+multi-year horizon, and board-snapshot tabs tracking forecast
+revisions. Phase 14 reads that workbook and emits a
+``DistributionProducerConfig`` (plus the broader normalized
+entity / cash-flow tables that future phases consume).
+
+### Module layout
+
+```text
+src/aa_model/ingestion/
+    __init__.py            # package marker; minimal exports
+    workbook.py            # WorkbookIngestor + the parser primitives
+    workbook_producer.py   # WorkbookDrivenProducer (engine="workbook"
+                           # adapter satisfying Phase 13's
+                           # DistributionProducer ABC)
+    schemas.py             # EntityRecord, CashFlowLineRecord,
+                           # WorkbookManifestConfig,
+                           # IngestionDiagnostics, IngestionResult
+```
+
+Adapter governance: Phase 13's existing ``DistributionProducer`` ABC
+is the stable interface. ``WorkbookDrivenProducer`` is the second
+concrete implementation under that ABC; the Phase 13 factory
+(``make_distribution_producer``) gains an ``engine="workbook"``
+branch. Consumer-side code (Owl, ``compute_spending_base``, the
+report renderer) is **completely unchanged**.
+
+### Read-only / determinism contract
+
+```python
+from openpyxl import load_workbook
+wb = load_workbook(
+    workbook_path,
+    read_only=True,    # streaming reader; no in-memory write graph
+    data_only=True,    # last-cached computed values; never formulas
+    keep_links=False,  # do not follow external workbook links
+)
+```
+
+* No ``wb.save()``, ``wb.write()``, ``wb.create_sheet()``,
+  or any mutation API ever called.
+* No formula evaluation; if a cell's cached value is stale (workbook
+  not opened + saved by Excel since the last formula edit), the
+  ingestor sees the stale value. The diagnostic surfaces a
+  warning when key reconciliation cells appear stale (e.g., the
+  family-aggregate roll-up mismatches the entity sum by more than
+  the documented tolerance).
+* No external link following; if a sheet contains ``=[other.xlsx]Sheet!A1``,
+  the cached value is read but the external workbook is not opened.
+* SHA256 hash of the raw ``.xlsx`` bytes captured before opening
+  (``IngestionDiagnostics.workbook_hash``) — provenance + cache key
+  for downstream reuse.
+
+### Workbook manifest
+
+The workbook structure can drift (sheet renames, new entities,
+period-header format changes). Phase 14 isolates that risk in a
+single Pydantic config:
+
+```python
+class WorkbookManifestConfig(BaseModel):
+    """Maps the workbook's structural layout to the ingestor's
+    parser. The manifest is committed; the workbook is not.
+    """
+
+    model_config = _STRICT
+    workbook_version: str                # e.g., "v7"; matched against
+                                         # the manifest's expected_version
+                                         # at load time
+    expected_workbook_filename: str      # "Cashflow Modeling v7.xlsx"
+                                         # — matched against the supplied
+                                         # path's basename for provenance
+
+    # Sheet roles. Each role maps to a list of sheet names. An
+    # ingestion run reads ONLY the sheets named here; sheets not
+    # mapped are skipped (and surfaced as
+    # IngestionDiagnostics.unmapped_sheets).
+    family_aggregate_sheets: list[str]   # validation targets — the
+                                         # "Summary" / "Cash Flow" /
+                                         # "Assumptions" tabs
+    entity_sheets: list[EntitySheetSpec] # one entity per sheet
+    re_partnership_sheets: list[REPartnershipSheetSpec]
+    board_snapshot_sheets: list[str]     # period-by-period forecast
+                                         # snapshots; reconciliation
+                                         # targets
+
+    # Parser overrides (defaults documented per sheet role).
+    period_header_format: Literal[
+        "yyyy_q",       # "2026Q1"
+        "q_yy",         # "Q1'26"
+        "q_yyyy",       # "Q1 2026"
+        "calendar_qe",  # quarter-end date in the header cell
+    ] = "yyyy_q"
+
+    # Subtotal / total exclusion patterns. Matched case-insensitively
+    # against the row label; rows hitting any pattern are excluded
+    # from data emission but counted in
+    # IngestionDiagnostics.excluded_subtotal_rows.
+    subtotal_label_patterns: list[str] = [
+        "total", "subtotal", "sum", "grand total", "net cash",
+    ]
+
+
+class EntitySheetSpec(BaseModel):
+    sheet_name: str
+    entity_id: str          # canonical id used across model layers
+    entity_type: Literal[
+        "operating_llc", "holding_llc",
+        "trust_crut", "trust_family", "trust_gift", "trust_gst",
+        "individual_account",
+        "real_estate_partnership",
+        "opco",
+        "family_aggregate",
+    ]
+    display_name: str       # human-friendly label; never used as a key
+    parent_entity_id: str | None = None
+    cash_flow_role: Literal["operating", "investment", "distribution_only"]
+    restricted_default: bool = False    # default for rows lacking an
+                                         # explicit restricted column
+    distributable_default: bool = False  # default for rows lacking an
+                                         # explicit distributable column
+
+
+class REPartnershipSheetSpec(EntitySheetSpec):
+    """Partnership-level cash-flow sheets typically have project
+    sub-ledgers (per-property rows). Inherits all EntitySheetSpec
+    fields plus a per-asset map for per-row asset_id assignment.
+    """
+    asset_id_by_row_label: dict[str, str] = Field(default_factory=dict)
+```
+
+The default manifest committed to the repo is keyed by
+``workbook_version="v7"`` and maps to the structural layout the
+user described in `PROJECT_SCOPE.md` §5.1. Future workbook
+versions get their own manifest; the workbook itself stays out
+of git.
+
+### Entity schema
+
+```python
+class EntityRecord(BaseModel):
+    """One normalized entity row produced by the ingestor."""
+
+    model_config = _STRICT
+    entity_id: str = Field(min_length=1)
+    display_name: str
+    entity_type: Literal[
+        "operating_llc", "holding_llc",
+        "trust_crut", "trust_family", "trust_gift", "trust_gst",
+        "individual_account",
+        "real_estate_partnership",
+        "opco",
+        "family_aggregate",
+    ]
+    parent_entity_id: str | None = None
+    cash_flow_role: Literal["operating", "investment", "distribution_only"]
+    source_sheet: str               # workbook sheet name (provenance)
+    source_workbook: str            # workbook filename (provenance)
+
+    # Phase 14 reviewer-tightening posture: cash-flow data lives at
+    # the cash-flow line layer (see CashFlowLineRecord). The entity
+    # record carries STRUCTURAL metadata only — type, parent,
+    # cash-flow role. It does NOT carry "distributable to FO" as an
+    # entity attribute; distributability is per-line classification.
+
+    @field_validator("entity_id")
+    @classmethod
+    def _no_colons(cls, v: str) -> str:
+        # Same convention discipline as Phase 13 producer ids:
+        # colons reserved for the source-string separator
+        # (distribution:<domain>:<id>).
+        if ":" in v:
+            raise ValueError(
+                f"entity_id may not contain colons; reserved for source "
+                f"convention separator. got {v!r}"
+            )
+        return v
+```
+
+### Cash-flow line schema
+
+```python
+class CashFlowLineRecord(BaseModel):
+    """One normalized cash-flow line — a single quarter's amount on
+    a single row label of a single entity sheet."""
+
+    model_config = _STRICT
+    source_workbook: str
+    sheet_name: str
+    row_label: str
+    entity_id: str = Field(min_length=1)
+    quarter: str = Field(pattern=r"^\d{4}Q[1-4]$")
+    amount_usd: float
+    category: str                              # workbook-supplied or
+                                                # manifest-derived
+                                                # (e.g., "rent",
+                                                # "distribution",
+                                                # "tax_payment")
+    direction: Literal["inflow", "outflow"]
+    certainty: Literal["actual", "contractual", "forecast", "scenario"]
+    recurrence_type: Literal["recurring", "one_time", "unknown"] = "unknown"
+    distributable_candidate: bool = False      # explicit upstream flag
+    restricted: bool = False                   # explicit upstream flag
+    source_reference: str | None = None        # optional sheet-cell ref
+                                                # (e.g., "Summary!B17")
+
+    @field_validator("amount_usd")
+    @classmethod
+    def _amount_finite(cls, v: float) -> float:
+        if not math.isfinite(v):
+            raise ValueError(f"amount_usd must be finite; got {v!r}")
+        return v
+
+    @model_validator(mode="after")
+    def _direction_sign_consistent(self) -> CashFlowLineRecord:
+        # Sign convention check: outflows have amount_usd < 0,
+        # inflows have amount_usd > 0. A workbook line with the
+        # opposite sign is a config / classification error
+        # surfaced during ingestion validation.
+        if self.direction == "inflow" and self.amount_usd < 0:
+            raise ValueError(
+                f"direction='inflow' requires amount_usd >= 0; "
+                f"got {self.amount_usd}"
+            )
+        if self.direction == "outflow" and self.amount_usd > 0:
+            raise ValueError(
+                f"direction='outflow' requires amount_usd <= 0; "
+                f"got {self.amount_usd}"
+            )
+        return self
+```
+
+### Domain-to-model mapping
+
+| Workbook structural domain | Phase 14 ingestion role | Downstream consumer |
+| --- | --- | --- |
+| Family aggregate roll-ups (Summary / Cash Flow / Assumptions) | parsed for **validation reconciliation only**; not emitted as data rows | Board-snapshot reconciliation (compares model aggregate to workbook aggregate) |
+| Operating LLCs | `EntityRecord(entity_type="operating_llc")` + `CashFlowLineRecord` rows for each quarter | future liquidity-coverage layer; some rows become distribution_inflow candidates |
+| Holding LLCs | `EntityRecord(entity_type="holding_llc")` + line rows | same |
+| Trust vehicles (CRUT / family / gift / GST) | `EntityRecord(entity_type="trust_*")` + line rows; CRUT rows particularly important for payout-calendar diagnostics | distribution_inflow candidates marked at the line layer |
+| Individual accounts | `EntityRecord(entity_type="individual_account")` + line rows | terminal beneficiary side; distributions IN to individuals are NOT producer candidates (those are post-FO consumption) |
+| Real-estate development partnerships | `EntityRecord(entity_type="real_estate_partnership")` + per-project sub-ledger rows; uses `REPartnershipSheetSpec.asset_id_by_row_label` to assign asset-level identifiers | distribution_inflow candidates with `domain="real_estate"` (stabilized) or `domain="development"` (one-time monetization) |
+| Multi-quarter actuals + forecast horizon | `CashFlowLineRecord.certainty` ∈ {actual, contractual, forecast, scenario} based on the quarter's position relative to the run's horizon and any explicit certainty column | producer entries inherit the certainty into the Phase 13 confidence diagnostic |
+| Period-by-period board snapshots | parsed into `IngestionDiagnostics.board_snapshots` for reconciliation deltas | report renderer surfaces deltas |
+
+### Workbook → distribution_inflow producer bridge
+
+The ingestor produces ``CashFlowLineRecord`` rows for **every**
+parsed line. A separate filter step converts the subset that
+qualify into ``DistributionEntryConfig`` entries:
+
+```python
+def workbook_lines_to_producer_config(
+    lines: list[CashFlowLineRecord],
+    entities_by_id: dict[str, EntityRecord],
+) -> DistributionProducerConfig:
+    """Phase 14 → Phase 13 bridge.
+
+    A line becomes a DistributionEntryConfig entry IFF:
+      - line.distributable_candidate == True (explicit flag, NOT inferred)
+      - line.restricted == False
+      - line.direction == "inflow"
+      - line.amount_usd > 0
+      - line.recurrence_type ∈ {"recurring", "one_time"}  # not "unknown"
+      - the resolved entity has cash_flow_role != "distribution_only"-target
+        (i.e., we don't treat distributions INTO an individual as a producer
+         entry — those are FO outflows from the family side, not FO inflows)
+
+    Source convention preserved exactly:
+      source = "distribution:<domain>:<asset_id-or-entity_id>"
+
+    Domain comes from the entity's entity_type (operating_llc /
+    holding_llc / trust_* → "entity" or "opco" depending on
+    cash_flow_role); real_estate_partnership rows use the asset_id
+    when available, fall back to the entity_id otherwise.
+
+    producer_id is constructed deterministically from
+    f"{workbook_version}__{sheet_name}__{row_label}__{quarter}" so
+    repeated ingestions of the same workbook produce identical
+    producer_ids — important for diff-based change tracking and
+    audit trails.
+    """
+```
+
+The bridge is **a separate function, not a hidden side-effect of
+ingestion**. The orchestrator decides whether to consume the
+candidate ``DistributionProducerConfig`` (default: use the bridge
+output if a workbook is configured; otherwise fall back to the
+existing config-driven producer or no producer at all).
+
+### What must NOT be inferred
+
+Codified per the user prompt and the standing principle:
+
+* **Legal distributability.** The workbook's
+  ``distributable_candidate`` column captures whether the human
+  has classified a line as legally distributable; the ingestor
+  reads the column. It does NOT decide.
+* **Tax treatment.** No federal / state / withholding logic. The
+  workbook's amounts are net-of-tax IF the human classified them
+  that way; the ingestor does not adjust.
+* **Ownership waterfall.** No multi-tier distribution math; no
+  preferred returns, no carry, no waterfall splits. If the workbook
+  declares a distribution to the FO of $X, the ingestor records $X.
+* **Unrestricted access to entity cash.** Cash recorded at an
+  operating LLC sheet is NOT inferred to be distributable. Only
+  rows where the human marked ``distributable_candidate=True`` are
+  bridged to the producer.
+* **Whether appraisal NAV is spendable.** The ingestor reads
+  cash-flow lines, not balance-sheet appraisals. NAV-side modeling
+  remains where Phase 12 + 12.5 left it.
+* **Whether OpCo cash is available to the FO.** OpCo cash flows
+  recorded on an OpCo sheet are NOT producer candidates by default.
+  Only rows the human classified as distributable to the FO qualify.
+
+### Validation rules
+
+| Rule | Behavior |
+| --- | --- |
+| Workbook path absent / not a file | ``FileNotFoundError`` with the resolved absolute path in the message |
+| Manifest expected_version ≠ workbook actual version | Hard error at ingestion start; manifest must be updated to match |
+| Manifest expected_workbook_filename ≠ supplied basename | Warning (filename drift); proceed with hash-based provenance |
+| Required sheet missing | Hard error; no partial ingestion |
+| Optional sheet missing | Warning; recorded in ``IngestionDiagnostics.missing_optional_sheets`` |
+| Period header unparseable | Skip column; record in ``IngestionDiagnostics.unparseable_period_headers`` for review |
+| Duplicate (entity_id, quarter, row_label) | Hard error; the ingestor refuses to choose between conflicting rows |
+| Blank rows | Silently skipped; counted in ``IngestionDiagnostics.blank_rows_skipped`` |
+| Subtotal / total rows | Excluded by ``WorkbookManifestConfig.subtotal_label_patterns`` matching; counted in ``IngestionDiagnostics.excluded_subtotal_rows`` |
+| Sign convention violation | Hard error at ``CashFlowLineRecord`` construction time (per-row validator) |
+| Entity ID has colons | Hard error (Phase 13 source-convention discipline) |
+| Quarter outside model horizon | Recorded; downstream consumers may filter via the orchestrator's start-quarter / num-quarters config |
+| Workbook hash | SHA256(raw .xlsx bytes) captured into ``IngestionDiagnostics.workbook_hash``; surfaced in the report |
+| Manifest version | Captured into ``IngestionDiagnostics.manifest_version`` |
+| Stale-formula heuristic | If family-aggregate roll-up cells differ from the entity-sum by more than the documented tolerance, flag in ``IngestionDiagnostics.stale_formula_warnings`` |
+
+### Outputs
+
+```python
+@dataclass(frozen=True)
+class IngestionResult:
+    entities: list[EntityRecord]
+    cash_flow_lines: list[CashFlowLineRecord]
+    candidate_producer_config: DistributionProducerConfig | None
+    diagnostics: IngestionDiagnostics
+
+
+@dataclass
+class IngestionDiagnostics:
+    workbook_hash: str                      # SHA256 of the raw .xlsx
+    workbook_filename: str                   # supplied basename
+    workbook_version: str                    # from manifest expected_version
+    manifest_version: str                    # the manifest committed to the repo
+    sheets_ingested: list[str]
+    unmapped_sheets: list[str]
+    missing_optional_sheets: list[str]
+    blank_rows_skipped: int
+    excluded_subtotal_rows: int
+    unparseable_period_headers: list[str]
+    stale_formula_warnings: list[str]
+
+    # Reconciliation against the family-aggregate / board-snapshot tabs.
+    # Each entry: (snapshot_label, snapshot_total_usd,
+    # ingestor_recomputed_total_usd, abs_delta_usd, abs_delta_pct).
+    board_snapshot_reconciliations: list[tuple[str, float, float, float, float]]
+
+    # Per-entity totals for the run horizon — used by the report
+    # diagnostic and by Phase 14 + Phase 13 cross-validation.
+    total_inflows_usd_by_entity: dict[str, float]
+    total_outflows_usd_by_entity: dict[str, float]
+
+    # Distribution-candidate breakdown. Counts and dollar totals of
+    # lines that qualified for the Phase 13 producer bridge,
+    # broken out by domain.
+    distribution_candidates_by_domain_usd: dict[str, float]
+    distribution_candidates_count: int
+    excluded_restricted_count: int
+    excluded_restricted_usd: float
+
+    # Lines that didn't fit any mapping rule — surfaced for human review.
+    unmatched_lines_count: int
+    unmatched_lines_sample: list[str]        # first N row labels for triage
+```
+
+### Report diagnostic
+
+New section ``## Workbook ingestion (advisory)`` rendered when a
+workbook ingestion ran. Composes with Phase 12.5's
+``## Owl spending base (advisory)`` and Phase 13's
+``## Distribution producer (advisory)`` so a reader sees the full
+provenance chain: workbook → producer → spending base → trajectory.
+
+```markdown
+## Workbook ingestion (advisory)
+
+- workbook:
+  - filename: Cashflow Modeling v7.xlsx
+  - hash: <sha256-prefix>
+  - version (manifest): v7
+  - manifest version: 1
+- sheets:
+  - ingested: 14
+  - unmapped: 2 ('Notes (DJS)', 'Old')
+  - missing optional: 0
+- rows:
+  - parsed: 1,247
+  - blank skipped: 38
+  - subtotal excluded: 96
+  - unparseable period headers: 0
+- per-entity totals (run horizon):
+  - <entity-type-aggregate listing>
+- board snapshot reconciliation:
+  - 'Summary FY2026': model = $X,XXX,XXX  workbook = $X,XXX,XXX  Δ = 0.02% — within tolerance
+  - <one row per snapshot tab>
+- distribution candidates (bridge to Phase 13 producer):
+  - by domain: real_estate / opco / portfolio / entity totals
+  - count: N entries
+  - excluded (restricted=True): K entries
+- unmatched lines:
+  - count: 0  (or "M lines — see ingestion log for triage")
+
+_Phase 14 ingests the operating cash-flow workbook as a read-only
+integration target. The workbook's classifications
+(``distributable_candidate``, ``restricted``, ``recurrence_type``,
+``certainty``) flow through to the Phase 13 producer unchanged.
+Phase 14 does NOT determine legal / tax / entity-governance
+distributability; it transcribes the human's classifications._
+```
+
+Warning bands:
+
+| Trigger | Threshold | Severity |
+| --- | --- | --- |
+| Board-snapshot Δ% | ``> 0.5%`` on any reconciliation | WARNING — workbook aggregate disagrees with entity sum; investigate stale formulas |
+| ``unmatched_lines_count`` | ``> 0`` | WARNING — lines need a manifest update |
+| ``stale_formula_warnings`` | ``> 0`` | WARNING — open + save the workbook in Excel to refresh cached values |
+| ``unparseable_period_headers`` | ``> 0`` | WARNING — manifest period_header_format mismatch |
+
+### State-flow contract / Phase 4a preservation
+
+* Ingestion runs **once at orchestrator construction**, before the
+  per-quarter loop begins. It does not interact with the ledger
+  directly; it produces a ``DistributionProducerConfig`` that the
+  Phase 13 producer consumes inside the per-quarter loop exactly
+  as it does for hand-authored configs.
+* The closed-prior-quarter contract is therefore preserved without
+  any new logic — Phase 14 is upstream of the loop, not inside it.
+* The ingestor is pure: same workbook + same manifest → same
+  ``IngestionResult`` byte-for-byte (modulo the workbook hash,
+  which is intentionally a function of the input bytes).
+
+### Default-off byte stability
+
+* If ``cfg.workbook_ingestion is None`` (or the manifest path is
+  unset), no ingestion runs. The orchestrator behaves exactly as
+  Phase 13 does today: producer is built from
+  ``cfg.distribution_producer`` if present, else None.
+* Existing fixtures, configs, and 265-test trajectories remain
+  byte-identical post-Phase-14.
+* Workbook ingestion is opt-in via a top-level ``StudyConfig.workbook_ingestion``
+  field (default ``None``). Tests construct synthetic
+  ``CashFlowLineRecord`` lists directly without touching openpyxl.
+
+### Tests planned (12)
+
+Schema (3):
+
+1. ``EntityRecord`` rejects entity_id with colons; accepts the full
+   ``entity_type`` Literal set.
+2. ``CashFlowLineRecord`` sign-convention validator: inflow + negative
+   amount → fail; outflow + positive amount → fail; finite/non-finite
+   amount validation.
+3. ``WorkbookManifestConfig`` cross-validates: required-sheet entries
+   reference distinct sheet names; ``EntitySheetSpec.entity_id`` is
+   globally unique across entity_sheets + re_partnership_sheets.
+
+Workbook reading (3):
+
+4. **Workbook absent fails clearly**: a missing path raises
+   ``FileNotFoundError`` with the resolved absolute path in the
+   message; no openpyxl-internal error leaks.
+5. **Fixture workbook parses deterministically**: a synthetic
+   ``tests/fixtures/cashflow_v7_synthetic.xlsx`` (committed; no live
+   data) parses to the same ``IngestionResult`` across repeated
+   reads (hash stable; counts stable; row-by-row equality).
+6. **Period headers normalize correctly**: each supported format
+   ("yyyy_q", "q_yy", "q_yyyy", "calendar_qe") parses to the
+   expected ``pd.Period`` set; unparseable formats land in
+   ``IngestionDiagnostics.unparseable_period_headers`` with no
+   crash.
+
+Validation rules (3):
+
+7. **Subtotal rows excluded**: rows whose label matches any
+   ``subtotal_label_patterns`` entry are not emitted as data rows;
+   ``IngestionDiagnostics.excluded_subtotal_rows`` is incremented
+   correctly.
+8. **Restricted rows excluded from producer bridge**: a fixture row
+   with ``restricted=True`` AND ``distributable_candidate=True``
+   does NOT become a ``DistributionEntryConfig`` entry; it counts
+   in ``excluded_restricted_count`` instead.
+9. **Workbook hash + manifest version captured**: the diagnostics
+   carry SHA256 of the fixture bytes + the manifest version string;
+   re-running on the same bytes produces the same hash.
+
+Bridge to Phase 13 (2):
+
+10. **Explicit distributable rows become producer entries**:
+    workbook_lines_to_producer_config converts the qualifying
+    fixture lines into a ``DistributionProducerConfig`` whose
+    ``producer_id`` values are deterministic and globally unique;
+    source-convention strings are well-formed
+    (``distribution:<domain>:<id>``).
+11. **End-to-end ingestion → producer → Owl**: the synthetic fixture
+    drives an Owl run with ``spending_base="distributable_income"``;
+    realized trailing income matches the bridged producer emissions;
+    no zero-income runtime guard fires.
+
+End-to-end (1):
+
+12. **Workbook ingestion advisory renders** with all sub-sections,
+    workbook-hash provenance, board-snapshot reconciliation
+    deltas, and warning bands when a synthesized fixture has a
+    deliberate stale-formula scenario.
+
+### What Phase 14 is **not**
+
+* **Not a tax engine.** No withholding, no character logic, no
+  jurisdictional rules.
+* **Not a legal distributability engine.** Workbook-classified is
+  the source of truth.
+* **Not a full ownership waterfall.** No tier math; no preferred
+  returns; no carry.
+* **Not a workbook editor.** Read-only; no write paths anywhere.
+* **Not an Investment Summary ingester.** That workbook is Phase
+  15 (positions, asset-class taxonomy, time-horizon / liquidity
+  bucket metadata).
+* **Not a board-snapshot generator.** Phase 14 reconciles AGAINST
+  board snapshots; it does not produce them.
+* **Not a CMA / allocation / PE producer.** Workbook ingestion
+  feeds the cash-flow + entity layers (PROJECT_SCOPE.md §3.1, §3.3)
+  and bridges to the Phase 13 producer. It does not touch the CMA,
+  the allocator, or the PE pacing layer.
+* **Not a Monte Carlo / scenario generator.** Forecast / scenario
+  classification is preserved as line-level metadata only.
+* **Not a fee-economics or secondary-sale model.**
+* **Not a backwards-compatibility break.** Default-off
+  byte-stable; no existing fixture, config, or trajectory changes.
+* **Not a live-data exposure.** Live values, person-level data,
+  and forecast tables are NEVER copied into ``MODEL_DOCUMENTATION.md``
+  or any committed artifact (PROJECT_SCOPE.md §5.3).
+
+### L19 status under Phase 14
+
+Phase 14 is the **last gate** between PARTIALLY RESOLVED and
+RESOLVED for L19. After Phase 14 implementation lands AND a
+validation pass against the live workbook reconciles within the
+documented tolerance, L19 flips to RESOLVED.
+
+Recommended status text on Phase 14 implementation (subject to
+reviewer tightening):
+
+```
+L19 — RESOLVED, Phase 12 + 12.5 + 13 + 14.
+Spending-rule denominator infrastructure complete (Phase 12 + 12.5).
+Producer-side seat shipped (Phase 13 config-driven, Phase 14
+workbook-driven). The model can now run end-to-end on the
+household's actual operating cash-flow forecast. Phase 14 does
+not determine legal / tax / entity-governance distributability —
+the workbook is the source of truth for those classifications.
+```
+
+If the live-workbook validation pass surfaces material
+reconciliation deltas or unmatched lines that block end-to-end
+runs, L19 stays at PARTIALLY RESOLVED until the reconciliation is
+clean. Reviewer judgment on the threshold for "clean enough to
+flip" is expected.
+
+### Locked design choices
+
+* New package ``src/aa_model/ingestion/`` with ``workbook.py``,
+  ``workbook_producer.py``, ``schemas.py``, ``__init__.py``.
+* ``WorkbookIngestor`` opens the workbook with
+  ``openpyxl(read_only=True, data_only=True, keep_links=False)``;
+  no mutation API ever invoked.
+* ``WorkbookDrivenProducer`` adapter under the existing Phase 13
+  ``DistributionProducer`` ABC; ``make_distribution_producer``
+  factory gains ``engine="workbook"`` branch.
+* Pydantic ``WorkbookManifestConfig`` committed to the repo;
+  workbook itself never committed (PROJECT_SCOPE.md §5.3).
+* SHA256 of raw .xlsx bytes captured as
+  ``IngestionDiagnostics.workbook_hash`` for provenance; manifest
+  version separately tracked.
+* ``EntityRecord`` carries structural metadata only (type, parent,
+  cash-flow role, source provenance); distributability is
+  per-line, not per-entity.
+* ``CashFlowLineRecord`` carries explicit upstream classification
+  fields (``distributable_candidate``, ``restricted``,
+  ``recurrence_type``, ``certainty``); the ingestor never infers
+  any of them.
+* Period header parser supports four formats; default ``"yyyy_q"``;
+  unparseable headers land in diagnostics, never crash.
+* Subtotal / total / blank rows excluded by manifest patterns;
+  counted in diagnostics; never emitted as data rows.
+* Sign-convention enforced at ``CashFlowLineRecord`` construction;
+  inflow + negative amount or outflow + positive amount → hard
+  error.
+* Entity ID URL-safety enforced (no colons; same Phase 13
+  discipline).
+* Workbook → producer bridge is a **separate, named function**
+  (``workbook_lines_to_producer_config``); the ingestor returns
+  the broader ``IngestionResult`` and the bridge is invoked
+  explicitly by the orchestrator.
+* ``producer_id`` for workbook-derived entries is deterministic:
+  ``f"{workbook_version}__{sheet_name}__{row_label}__{quarter}"``
+  — same workbook + same manifest → same producer_ids.
+* Board-snapshot reconciliation is the validation primitive;
+  abs-Δ% > 0.5% surfaces a WARNING.
+* New report section ``## Workbook ingestion (advisory)``;
+  composes with the Phase 12.5 + Phase 13 advisory sections.
+* Default-off byte-stability: ``cfg.workbook_ingestion = None``
+  ⇒ no ingestion ⇒ Phase 13 trajectories byte-identical.
+* Phase 14 does NOT mutate the workbook; does NOT determine
+  legal / tax / entity-governance distributability; does NOT
+  copy live values into ``MODEL_DOCUMENTATION.md`` or any
+  committed artifact.
+* L19 status flips to RESOLVED on Phase 14 implementation IFF
+  the live-workbook validation pass reconciles cleanly.
+  Otherwise stays at PARTIALLY RESOLVED until the reconciliation
+  is clean. Reviewer-tightening guidance expected.
+
+---
+
 ## Change Log
 
 Entries are appended in chronological order. Each entry: date, commit hash,
