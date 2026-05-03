@@ -231,10 +231,7 @@ def compute_spending_base(
                 "spending_base='distributable_income' requires ledger "
                 "and prior_quarter at the OwlRule call site"
             )
-        if (
-            distribution_window_quarters is None
-            or bootstrap_distributable_income_usd is None
-        ):
+        if distribution_window_quarters is None or bootstrap_distributable_income_usd is None:
             raise ValueError(
                 "spending_base='distributable_income' requires "
                 "distribution_window_quarters and "

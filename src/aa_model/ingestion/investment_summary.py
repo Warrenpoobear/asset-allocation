@@ -34,10 +34,11 @@ from __future__ import annotations
 import hashlib
 import math
 from collections import defaultdict
-from datetime import date, timedelta
+from datetime import date
 from pathlib import Path
 
 from aa_model.ingestion.schemas_position import (
+    _SEMI_ILLIQUID_BUCKETS,
     AccountRecord,
     AccountSheetSpec,
     ManagerTermsRecord,
@@ -45,7 +46,6 @@ from aa_model.ingestion.schemas_position import (
     PositionIngestionResult,
     PositionManifestConfig,
     PositionRecord,
-    _SEMI_ILLIQUID_BUCKETS,
 )
 
 _STALE_THRESHOLD_DAYS = 90
@@ -112,9 +112,7 @@ def ingest_investment_summary(
     Raises FileNotFoundError if ``workbook_path`` does not exist.
     """
     if not workbook_path.exists():
-        raise FileNotFoundError(
-            f"Investment Summary workbook not found: {workbook_path.resolve()}"
-        )
+        raise FileNotFoundError(f"Investment Summary workbook not found: {workbook_path.resolve()}")
 
     wb_hash = _sha256(workbook_path)
 
@@ -127,9 +125,7 @@ def ingest_investment_summary(
         keep_links=False,
     )
 
-    manager_by_id: dict[str, ManagerTermsRecord] = {
-        m.manager_id: m for m in manifest.manager_terms
-    }
+    manager_by_id: dict[str, ManagerTermsRecord] = {m.manager_id: m for m in manifest.manager_terms}
 
     accounts: list[AccountRecord] = []
     positions: list[PositionRecord] = []
@@ -249,15 +245,14 @@ def ingest_investment_summary(
                 row_date: date | None = None
                 if vd_col is not None and vd_col < len(row):
                     import datetime as _dt
+
                     raw_vd = row[vd_col]
                     if isinstance(raw_vd, _dt.datetime):
                         row_date = raw_vd.date()
                     elif isinstance(raw_vd, date):
                         row_date = raw_vd
 
-                valuation_date, used_fallback = _resolve_valuation_date(
-                    row_date, spec, manifest
-                )
+                valuation_date, used_fallback = _resolve_valuation_date(row_date, spec, manifest)
 
                 position_id = f"{spec.account_id}__{row_idx + 1}"
 
@@ -346,10 +341,7 @@ def _build_diagnostics(
 
     missing_manager = sum(1 for p in positions if p.manager_id is None)
 
-    mgr_coverage = {
-        m.manager_id: m.confidence
-        for m in manifest.manager_terms
-    }
+    mgr_coverage = {m.manager_id: m.confidence for m in manifest.manager_terms}
 
     return PositionIngestionDiagnostics(
         workbook_hash=wb_hash,
@@ -371,7 +363,7 @@ def _build_diagnostics(
     )
 
 
-def load_position_manifest(path: "Path | str") -> PositionManifestConfig:
+def load_position_manifest(path: Path | str) -> PositionManifestConfig:
     """Load and validate a PositionManifestConfig from a YAML file.
 
     Phase 17 / L20 reviewer tightening 1 (helper in ingestion layer, not
@@ -392,7 +384,6 @@ def load_position_manifest(path: "Path | str") -> PositionManifestConfig:
 
 def render_position_report_section(result: PositionIngestionResult) -> str:
     """Render the ## Position universe (Phase 15, advisory) report section."""
-    from aa_model.ingestion.liquidity_mapping import build_effective_mapping
 
     d = result.diagnostics
     manifest_version = d.manifest_version
@@ -411,9 +402,15 @@ def render_position_report_section(result: PositionIngestionResult) -> str:
     ]
 
     bucket_order = [
-        "cash_equivalent", "daily_liquid", "semi_liquid", "illiquid",
-        "locked_strategic", "re_stabilized", "re_development",
-        "re_land", "opco_strategic",
+        "cash_equivalent",
+        "daily_liquid",
+        "semi_liquid",
+        "illiquid",
+        "locked_strategic",
+        "re_stabilized",
+        "re_development",
+        "re_land",
+        "opco_strategic",
     ]
     for bucket in bucket_order:
         count = d.positions_by_bucket.get(bucket, 0)

@@ -17,12 +17,10 @@ Coverage (8 tests):
 from __future__ import annotations
 
 import pytest
-
 from aa_model.integration.orchestrator import (
     _extract_spending_base_for_coverage,
     _normalize_bool_keyed_dict,
 )
-
 
 # ---- shared synthetic helpers -----------------------------------------------
 
@@ -71,6 +69,7 @@ def _stub_cfg():
     We pass a plain object with the minimum attribute surface needed.
     """
     from pathlib import Path
+
     from aa_model.io.loaders import load_study_config
 
     config_path = Path(__file__).parents[1] / "configs" / "base.yaml"
@@ -179,9 +178,7 @@ def test_extract_income_mode_bootstrap_emits_advisory():
     assert isinstance(breakdown, SpendingBaseBreakdown)
     assert breakdown.base_usd == pytest.approx(60_000.0)
     assert breakdown.is_bootstrap is True
-    assert breakdown.distributable_income_by_source_usd == {
-        "fixed_income": pytest.approx(60_000.0)
-    }
+    assert breakdown.distributable_income_by_source_usd == {"fixed_income": pytest.approx(60_000.0)}
     assert len(advisories) == 1
     assert "bootstrap" in advisories[0]
 

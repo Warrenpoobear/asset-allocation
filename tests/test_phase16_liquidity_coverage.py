@@ -24,14 +24,12 @@ from __future__ import annotations
 import datetime
 
 import pytest
-
-from aa_model.ingestion.schemas_position import ManagerTermsRecord, PositionRecord
+from aa_model.ingestion.schemas_position import PositionRecord
 from aa_model.liquidity.coverage import (
     LiquidityCoverageConfig,
     LiquidityObligationConfig,
     compute_liquidity_coverage,
 )
-
 
 # ---- synthetic position builder --------------------------------------------
 
@@ -147,9 +145,7 @@ def test_ok_liquid_above_warning_threshold():
 
 def test_zero_total_nav_no_division_error():
     """Phase 16 #6: zero positions → ratios are None; no ZeroDivisionError."""
-    result = compute_liquidity_coverage(
-        [], _obligations(annual_spend_usd=100_000)
-    )
+    result = compute_liquidity_coverage([], _obligations(annual_spend_usd=100_000))
     assert result.total_position_nav == 0.0
     assert result.liquid_nav == 0.0
     assert result.liquid_to_annual_spend == pytest.approx(0.0)
@@ -185,8 +181,9 @@ def test_t4_unfunded_without_capital_calls_advisory():
 
     assert result.total_unfunded_commitments_usd == pytest.approx(200_000)
     assert result.capital_call_coverage is None
-    assert any("next_12m_capital_calls_usd" in a or "unfunded" in a
-               for a in result.diagnostics.advisories)
+    assert any(
+        "next_12m_capital_calls_usd" in a or "unfunded" in a for a in result.diagnostics.advisories
+    )
 
 
 # ---- 9. T5: distributable_income mode labeling -----------------------------
@@ -200,7 +197,7 @@ def test_t5_distributable_income_labeling():
     obs = _obligations()
 
     spending_base = SpendingBaseBreakdown(
-        base_usd=100_000,              # annual distributable income estimate
+        base_usd=100_000,  # annual distributable income estimate
         excluded_by_tier_usd={},
         excluded_by_income_flag_usd={},
         distributable_income_by_source_usd={"re_entity_01": 100_000.0},
@@ -250,8 +247,8 @@ def test_t5_nav_mode_spending_base():
 def test_t3_semi_liquid_excluded_from_runway_and_breach():
     """Phase 16 #10: T3 — semi-liquid NAV not in runway or breach coverage."""
     positions = [
-        _pos("daily_liquid", 80_000),    # liquid
-        _pos("semi_liquid", 500_000),    # semi-liquid: advisory only
+        _pos("daily_liquid", 80_000),  # liquid
+        _pos("semi_liquid", 500_000),  # semi-liquid: advisory only
     ]
     obs = _obligations(annual_spend_usd=100_000)
     result = compute_liquidity_coverage(positions, obs)

@@ -73,9 +73,7 @@ def apply_correlation_shock(
     raises before the new config can be used.
     """
     if not baseline.correlations:
-        raise ValueError(
-            "apply_correlation_shock: baseline CMAConfig has no correlation matrix"
-        )
+        raise ValueError("apply_correlation_shock: baseline CMAConfig has no correlation matrix")
 
     buckets = sorted(baseline.correlations.keys())
     # Deep copy of the correlation dict so we never touch the baseline.

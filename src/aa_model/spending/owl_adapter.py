@@ -152,12 +152,8 @@ class OwlRule(SpendingRule):
         annual = self._last_annual_spend
         total_nav = self._last_total_nav_realized
         base_usd = out["spending_base_run_end_usd"]
-        out["withdrawal_rate_vs_total_nav"] = (
-            (annual / total_nav) if total_nav > 0.0 else 0.0
-        )
-        out["withdrawal_rate_vs_spending_base"] = (
-            (annual / base_usd) if base_usd > 0.0 else 0.0
-        )
+        out["withdrawal_rate_vs_total_nav"] = (annual / total_nav) if total_nav > 0.0 else 0.0
+        out["withdrawal_rate_vs_spending_base"] = (annual / base_usd) if base_usd > 0.0 else 0.0
         # (illiquid + locked_strategic) / total_nav at run end —
         # consumed by the report's default-base material-illiquid
         # warning (reviewer tightening: alert when default mode is
@@ -177,13 +173,8 @@ class OwlRule(SpendingRule):
         # otherwise. The report renderer keys off these fields plus
         # spending_base_mode to choose the third render mode.
         last_realized = self._last_spending_base_realized
-        if (
-            self._last_spending_base_mode == "distributable_income"
-            and last_realized is not None
-        ):
-            out["trailing_distributable_income_usd"] = float(
-                last_realized.base_usd
-            )
+        if self._last_spending_base_mode == "distributable_income" and last_realized is not None:
+            out["trailing_distributable_income_usd"] = float(last_realized.base_usd)
             out["distributable_income_by_source_usd"] = dict(
                 last_realized.distributable_income_by_source_usd
             )
@@ -270,9 +261,7 @@ class OwlRule(SpendingRule):
         # NAV-side modes ignore prior_quarter and read initial_nav_series
         # directly, so this is a no-op for them.
         initial_prior_q = (
-            params.start_quarter - 1
-            if gr.spending_base == "distributable_income"
-            else prior_q
+            params.start_quarter - 1 if gr.spending_base == "distributable_income" else prior_q
         )
         initial = compute_spending_base(
             initial_nav_series,

@@ -30,8 +30,6 @@ End-to-end (2):
 
 from __future__ import annotations
 
-import math
-
 import pandas as pd
 import pytest
 from aa_model.assumptions.cma import CMA
@@ -45,11 +43,9 @@ from aa_model.io.schemas import (
 from aa_model.spending.base import SpendingParams
 from aa_model.spending.owl_adapter import OwlRule
 from aa_model.spending.spending_base import (
-    SpendingBaseBreakdown,
     compute_spending_base,
 )
 from pydantic import ValidationError
-
 
 # ---- shared helpers --------------------------------------------------------
 
@@ -123,9 +119,7 @@ def _spending_cfg(
 
 def test_spending_base_defaults_and_literals():
     """Phase 12 #1: default None + accepts all four documented modes."""
-    base = GuardrailConfig(
-        upper_band_pct=0.2, lower_band_pct=0.2, raise_pct=0.1, cut_pct=0.1
-    )
+    base = GuardrailConfig(upper_band_pct=0.2, lower_band_pct=0.2, raise_pct=0.1, cut_pct=0.1)
     assert base.spending_base is None
 
     for mode in (
@@ -299,7 +293,12 @@ def test_studyconfig_cross_validation_failure_paths():
 
 def _nav_4bucket(usd_per_bucket: float = 25_000_000.0) -> pd.Series:
     return pd.Series(
-        {"cash": usd_per_bucket, "hf": usd_per_bucket, "re_stab": usd_per_bucket, "land": usd_per_bucket},
+        {
+            "cash": usd_per_bucket,
+            "hf": usd_per_bucket,
+            "re_stab": usd_per_bucket,
+            "land": usd_per_bucket,
+        },
         dtype=float,
     )
 
@@ -445,9 +444,7 @@ def test_owl_trigger_fires_on_spending_base_not_total_nav():
     )
 
     # Same setup, liquid_nav base — should cut at year boundary 1.
-    cfg_liquid = _spending_cfg(
-        annual_spend_usd=4_000_000.0, spending_base="liquid_nav"
-    )
+    cfg_liquid = _spending_cfg(annual_spend_usd=4_000_000.0, spending_base="liquid_nav")
     rule_liquid = OwlRule()
     traj_liquid, _ = _drive_owl_4bucket(
         rule_liquid,
@@ -520,7 +517,13 @@ def test_owl_state_flow_contract_preserved():
     for i in range(4):
         q = _q("2026Q1") + i
         quarterly = rule.quarterly_outflow_at(L, params, q)
-        L.add(quarter=q, bucket="cash", flow_type="spend", amount_usd=-quarterly, source=rule.SOURCE_ID)
+        L.add(
+            quarter=q,
+            bucket="cash",
+            flow_type="spend",
+            amount_usd=-quarterly,
+            source=rule.SOURCE_ID,
+        )
 
     rule_a = OwlRule()
     decision_a = rule_a.quarterly_outflow_at(L, params, _q("2026Q1") + 4)
@@ -550,9 +553,7 @@ def test_owl_runtime_guard_base_must_be_positive():
     # That makes every bucket excluded → base = 0 → runtime guard fires.
     nav = _nav_4bucket()
     # Construct synthetic CMA with all buckets tagged illiquid.
-    liq_all_illiquid = pd.Series(
-        {b: "illiquid" for b in nav.index}, dtype=object
-    )
+    liq_all_illiquid = pd.Series({b: "illiquid" for b in nav.index}, dtype=object)
     inc = pd.Series({b: False for b in nav.index}, dtype=bool)
 
     cfg = _spending_cfg(spending_base="liquid_nav")
@@ -627,13 +628,19 @@ def _build_owl_diagnostics_for_report(
             ret_amt = nav[b] * returns[b][i]
             if ret_amt != 0.0:
                 L.add(
-                    quarter=q, bucket=b, flow_type="return",
-                    amount_usd=ret_amt, source="cma",
+                    quarter=q,
+                    bucket=b,
+                    flow_type="return",
+                    amount_usd=ret_amt,
+                    source="cma",
                 )
                 nav[b] += ret_amt
         L.add(
-            quarter=q, bucket="cash", flow_type="spend",
-            amount_usd=-quarterly, source=rule.SOURCE_ID,
+            quarter=q,
+            bucket="cash",
+            flow_type="spend",
+            amount_usd=-quarterly,
+            source=rule.SOURCE_ID,
         )
         nav["cash"] -= quarterly
     return rule, L, cfg
@@ -642,7 +649,7 @@ def _build_owl_diagnostics_for_report(
 def _load_real_study_with_owl_spending(
     spending_base: str | None,
     repo_root,
-) -> "object":  # StudyConfig
+) -> object:  # StudyConfig
     """Load the on-disk base config, then model_copy `spending` to use
     Owl with the requested spending_base. We do NOT touch the on-disk
     CMA — its 3-tier liquidity is sufficient for liquid_nav/total_nav
@@ -680,7 +687,8 @@ def test_report_renders_non_default_base_diagnostic(tmp_path, repo_root):
     # Drive OwlRule against the 4-bucket fixture so diagnostics() is
     # populated with realistic exclusion rollups.
     rule, ledger, _spend_cfg = _build_owl_diagnostics_for_report(
-        spending_base="liquid_nav", initial_nav_per_bucket=25_000_000.0,
+        spending_base="liquid_nav",
+        initial_nav_per_bucket=25_000_000.0,
     )
     diagnostics = rule.diagnostics()
     assert diagnostics["spending_base_mode"] == "liquid_nav"
@@ -755,7 +763,9 @@ def test_report_renders_default_base_material_illiquid_warning(tmp_path, repo_ro
     # Build a minimal valid ledger with one quarter so end_nav is non-empty.
     L = QuarterlyLedger(
         "test_default_warning",
-        initial_nav={b: 25_000_000.0 for b in ("cash", "public_bond", "public_equity", "pe_buyout")},
+        initial_nav={
+            b: 25_000_000.0 for b in ("cash", "public_bond", "public_equity", "pe_buyout")
+        },
         start_quarter=_q("2026Q1"),
     )
     L.finalize()

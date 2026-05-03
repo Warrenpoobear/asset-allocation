@@ -120,9 +120,7 @@ def test_high_turnover_triggers_market_impact_advisory(repo_root: Path):
     from aa_model.integration.orchestrator import run_orchestrator
 
     configs = repo_root / "configs"
-    public_alloc = yaml.safe_load(
-        (configs / "public_allocation.yaml").read_text(encoding="utf-8")
-    )
+    public_alloc = yaml.safe_load((configs / "public_allocation.yaml").read_text(encoding="utf-8"))
     # New policy weights: pe_buyout stays 0.25 (sleeve_target_pct
     # constraint); liquid weights shifted to force a large rebalance
     # away from the fixture's equity-heavy initial NAV.

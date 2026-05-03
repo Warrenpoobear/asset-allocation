@@ -22,7 +22,6 @@ import textwrap
 from pathlib import Path
 
 import pytest
-
 from aa_model.ingestion.schemas_position import (
     PositionIngestionDiagnostics,
     PositionIngestionResult,
@@ -32,12 +31,9 @@ from aa_model.ingestion.schemas_position import (
 from aa_model.io.schemas import PositionIngestionConfig
 from aa_model.liquidity.coverage import (
     LiquidityObligationConfig,
-    LiquidityCoverageConfig,
-    LiquidityCoverageResult,
     compute_liquidity_coverage,
     render_coverage_report_section,
 )
-
 
 # ---- shared synthetic builder ----------------------------------------------
 
@@ -135,9 +131,7 @@ def test_study_config_position_ingestion_default_none(tmp_path):
     from aa_model.io.loaders import load_study_config
 
     # Use an existing config fixture — any of the default ones work.
-    config_path = (
-        Path(__file__).parents[1] / "configs" / "base.yaml"
-    )
+    config_path = Path(__file__).parents[1] / "configs" / "base.yaml"
     if not config_path.exists():
         pytest.skip("base.yaml fixture not available in this environment")
 
@@ -189,15 +183,9 @@ def test_load_position_manifest_valid_yaml(tmp_path):
 def test_run_liquidity_coverage_wiring():
     """Phase 17 #7: _run_liquidity_coverage threads positions + manifest + cfg correctly."""
     from aa_model.integration.orchestrator import _run_liquidity_coverage
-    from aa_model.io.schemas import (
-        StudyConfig,
-        PositionIngestionConfig,
-    )
     from aa_model.io.loaders import load_study_config
 
-    config_path = (
-        Path(__file__).parents[1] / "configs" / "base.yaml"
-    )
+    config_path = Path(__file__).parents[1] / "configs" / "base.yaml"
     if not config_path.exists():
         pytest.skip("base.yaml fixture not available in this environment")
 

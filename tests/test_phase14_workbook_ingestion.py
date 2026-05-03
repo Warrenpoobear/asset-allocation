@@ -54,7 +54,6 @@ from aa_model.ingestion.schemas import (
     CashFlowLineRecord,
     EntityRecord,
     EntitySheetSpec,
-    IngestionDiagnostics,
     REPartnershipSheetSpec,
     RowClassificationRule,
     WorkbookManifestConfig,
@@ -65,7 +64,6 @@ from aa_model.ingestion.workbook import (
     workbook_lines_to_producer_config,
 )
 from pydantic import ValidationError
-
 
 # ---- synthetic workbook builder --------------------------------------------
 
@@ -137,9 +135,15 @@ def test_entity_record_validation():
 
     # All entity_type Literal values accepted.
     for et in (
-        "operating_llc", "holding_llc",
-        "trust_crut", "trust_family", "trust_gift", "trust_gst",
-        "individual_account", "real_estate_partnership", "opco",
+        "operating_llc",
+        "holding_llc",
+        "trust_crut",
+        "trust_family",
+        "trust_gift",
+        "trust_gst",
+        "individual_account",
+        "real_estate_partnership",
+        "opco",
         "family_aggregate",
     ):
         EntityRecord(
@@ -156,41 +160,71 @@ def test_cash_flow_line_sign_convention_and_finite():
     """Phase 14 #2: inflow/outflow sign mapping + finite amount."""
     # Valid inflow (positive).
     line = CashFlowLineRecord(
-        source_workbook="x.xlsx", sheet_name="EntityA", row_label="Rent",
-        entity_id="entity_a", quarter="2026Q1", amount_usd=100_000.0,
-        category="rent", direction="inflow", certainty="contractual",
+        source_workbook="x.xlsx",
+        sheet_name="EntityA",
+        row_label="Rent",
+        entity_id="entity_a",
+        quarter="2026Q1",
+        amount_usd=100_000.0,
+        category="rent",
+        direction="inflow",
+        certainty="contractual",
     )
     assert line.direction == "inflow"
 
     # Valid outflow (negative).
     line2 = CashFlowLineRecord(
-        source_workbook="x.xlsx", sheet_name="EntityA", row_label="Tax",
-        entity_id="entity_a", quarter="2026Q1", amount_usd=-50_000.0,
-        category="tax", direction="outflow", certainty="forecast",
+        source_workbook="x.xlsx",
+        sheet_name="EntityA",
+        row_label="Tax",
+        entity_id="entity_a",
+        quarter="2026Q1",
+        amount_usd=-50_000.0,
+        category="tax",
+        direction="outflow",
+        certainty="forecast",
     )
     assert line2.direction == "outflow"
 
     # Inflow + negative amount fails.
     with pytest.raises(ValidationError, match="direction='inflow' requires"):
         CashFlowLineRecord(
-            source_workbook="x.xlsx", sheet_name="X", row_label="X",
-            entity_id="x", quarter="2026Q1", amount_usd=-1.0,
-            category="x", direction="inflow", certainty="forecast",
+            source_workbook="x.xlsx",
+            sheet_name="X",
+            row_label="X",
+            entity_id="x",
+            quarter="2026Q1",
+            amount_usd=-1.0,
+            category="x",
+            direction="inflow",
+            certainty="forecast",
         )
     # Outflow + positive amount fails.
     with pytest.raises(ValidationError, match="direction='outflow' requires"):
         CashFlowLineRecord(
-            source_workbook="x.xlsx", sheet_name="X", row_label="X",
-            entity_id="x", quarter="2026Q1", amount_usd=+1.0,
-            category="x", direction="outflow", certainty="forecast",
+            source_workbook="x.xlsx",
+            sheet_name="X",
+            row_label="X",
+            entity_id="x",
+            quarter="2026Q1",
+            amount_usd=+1.0,
+            category="x",
+            direction="outflow",
+            certainty="forecast",
         )
 
     # Non-finite amount fails.
     with pytest.raises(ValidationError, match="amount_usd must be finite"):
         CashFlowLineRecord(
-            source_workbook="x.xlsx", sheet_name="X", row_label="X",
-            entity_id="x", quarter="2026Q1", amount_usd=float("inf"),
-            category="x", direction="inflow", certainty="forecast",
+            source_workbook="x.xlsx",
+            sheet_name="X",
+            row_label="X",
+            entity_id="x",
+            quarter="2026Q1",
+            amount_usd=float("inf"),
+            category="x",
+            direction="inflow",
+            certainty="forecast",
         )
 
 
@@ -211,14 +245,20 @@ def test_manifest_validators():
             expected_workbook_filename="x.xlsx",
             entity_sheets=[
                 EntitySheetSpec(
-                    sheet_name="A", entity_id="dup", entity_type="operating_llc",
-                    display_name="A", cash_flow_role="operating",
+                    sheet_name="A",
+                    entity_id="dup",
+                    entity_type="operating_llc",
+                    display_name="A",
+                    cash_flow_role="operating",
                 ),
             ],
             re_partnership_sheets=[
                 REPartnershipSheetSpec(
-                    sheet_name="B", entity_id="dup", entity_type="real_estate_partnership",
-                    display_name="B", cash_flow_role="operating",
+                    sheet_name="B",
+                    entity_id="dup",
+                    entity_type="real_estate_partnership",
+                    display_name="B",
+                    cash_flow_role="operating",
                 ),
             ],
         )
@@ -231,8 +271,11 @@ def test_manifest_validators():
             family_aggregate_sheets=["Summary"],
             entity_sheets=[
                 EntitySheetSpec(
-                    sheet_name="Summary", entity_id="e1", entity_type="operating_llc",
-                    display_name="E1", cash_flow_role="operating",
+                    sheet_name="Summary",
+                    entity_id="e1",
+                    entity_type="operating_llc",
+                    display_name="E1",
+                    cash_flow_role="operating",
                 ),
             ],
         )
@@ -260,13 +303,16 @@ def test_missing_workbook_raises_with_resolved_path(tmp_path):
 def test_synthetic_fixture_parses_deterministically(tmp_path):
     """Phase 14 #5: same workbook bytes → same hash, same row counts."""
     wb_path = tmp_path / "synthetic_v1.xlsx"
-    _build_synthetic_workbook(wb_path, sheets={
-        "EntityA": [
-            ["Item", "2026Q1", "2026Q2", "2026Q3", "2026Q4"],
-            ["Rent collected",  100_000, 100_000, 100_000, 100_000],
-            ["Tax payment",     -10_000, -10_000, -10_000, -10_000],
-        ],
-    })
+    _build_synthetic_workbook(
+        wb_path,
+        sheets={
+            "EntityA": [
+                ["Item", "2026Q1", "2026Q2", "2026Q3", "2026Q4"],
+                ["Rent collected", 100_000, 100_000, 100_000, 100_000],
+                ["Tax payment", -10_000, -10_000, -10_000, -10_000],
+            ],
+        },
+    )
     manifest = WorkbookManifestConfig(
         workbook_version="v1",
         expected_workbook_filename="synthetic_v1.xlsx",
@@ -336,34 +382,44 @@ def test_subtotal_rows_excluded(tmp_path):
     """Phase 14 #7: rows whose label hits subtotal_label_patterns are
     excluded from cash_flow_lines and counted in diagnostics."""
     wb_path = tmp_path / "synthetic_v1.xlsx"
-    _build_synthetic_workbook(wb_path, sheets={
-        "EntityA": [
-            ["Item", "2026Q1"],
-            ["Rent collected", 100_000],
-            ["Total operating cash", 100_000],   # subtotal — excluded
-            ["Subtotal: Q1",         50_000],     # subtotal — excluded
-            ["Tax payment",          -10_000],
-        ],
-    })
+    _build_synthetic_workbook(
+        wb_path,
+        sheets={
+            "EntityA": [
+                ["Item", "2026Q1"],
+                ["Rent collected", 100_000],
+                ["Total operating cash", 100_000],  # subtotal — excluded
+                ["Subtotal: Q1", 50_000],  # subtotal — excluded
+                ["Tax payment", -10_000],
+            ],
+        },
+    )
     manifest = WorkbookManifestConfig(
         workbook_version="v1",
         expected_workbook_filename="synthetic_v1.xlsx",
         entity_sheets=[
             EntitySheetSpec(
-                sheet_name="EntityA", entity_id="entity_a",
-                entity_type="operating_llc", display_name="Entity A",
+                sheet_name="EntityA",
+                entity_id="entity_a",
+                entity_type="operating_llc",
+                display_name="Entity A",
                 cash_flow_role="operating",
                 row_classification_rules=[
                     RowClassificationRule(
                         row_label_pattern="rent collected",
-                        direction="inflow", category="rent", domain="real_estate",
-                        distributable_candidate=True, recurrence_type="recurring",
+                        direction="inflow",
+                        category="rent",
+                        domain="real_estate",
+                        distributable_candidate=True,
+                        recurrence_type="recurring",
                         certainty="contractual",
                     ),
                     RowClassificationRule(
                         row_label_pattern="tax payment",
-                        direction="outflow", category="tax",
-                        recurrence_type="recurring", certainty="contractual",
+                        direction="outflow",
+                        category="tax",
+                        recurrence_type="recurring",
+                        certainty="contractual",
                     ),
                 ],
             ),
@@ -379,33 +435,46 @@ def test_restricted_rows_excluded_from_producer_bridge(tmp_path):
     """Phase 14 #8: a restricted row marked distributable_candidate=True
     in the rule does NOT become a DistributionEntryConfig entry."""
     wb_path = tmp_path / "synthetic_v1.xlsx"
-    _build_synthetic_workbook(wb_path, sheets={
-        "EntityA": [
-            ["Item", "2026Q1"],
-            ["Rent collected (open)",      100_000],   # ungated
-            ["Rent collected (restricted)", 80_000],   # restricted=True via rule
-        ],
-    })
+    _build_synthetic_workbook(
+        wb_path,
+        sheets={
+            "EntityA": [
+                ["Item", "2026Q1"],
+                ["Rent collected (open)", 100_000],  # ungated
+                ["Rent collected (restricted)", 80_000],  # restricted=True via rule
+            ],
+        },
+    )
     manifest = WorkbookManifestConfig(
         workbook_version="v1",
         expected_workbook_filename="synthetic_v1.xlsx",
         entity_sheets=[
             EntitySheetSpec(
-                sheet_name="EntityA", entity_id="entity_a",
-                entity_type="operating_llc", display_name="Entity A",
+                sheet_name="EntityA",
+                entity_id="entity_a",
+                entity_type="operating_llc",
+                display_name="Entity A",
                 cash_flow_role="operating",
                 row_classification_rules=[
                     RowClassificationRule(
                         row_label_pattern="restricted",
-                        direction="inflow", category="rent", domain="real_estate",
-                        distributable_candidate=True, restricted=True,
-                        recurrence_type="recurring", certainty="contractual",
+                        direction="inflow",
+                        category="rent",
+                        domain="real_estate",
+                        distributable_candidate=True,
+                        restricted=True,
+                        recurrence_type="recurring",
+                        certainty="contractual",
                     ),
                     RowClassificationRule(
                         row_label_pattern="rent collected",
-                        direction="inflow", category="rent", domain="real_estate",
-                        distributable_candidate=True, restricted=False,
-                        recurrence_type="recurring", certainty="contractual",
+                        direction="inflow",
+                        category="rent",
+                        domain="real_estate",
+                        distributable_candidate=True,
+                        restricted=False,
+                        recurrence_type="recurring",
+                        certainty="contractual",
                     ),
                 ],
             ),
@@ -426,19 +495,24 @@ def test_restricted_rows_excluded_from_producer_bridge(tmp_path):
 def test_workbook_hash_and_manifest_version_captured(tmp_path):
     """Phase 14 #9: provenance fields populate on every run."""
     wb_path = tmp_path / "synthetic_v1.xlsx"
-    _build_synthetic_workbook(wb_path, sheets={
-        "EntityA": [
-            ["Item", "2026Q1"],
-            ["Rent collected", 100_000],
-        ],
-    })
+    _build_synthetic_workbook(
+        wb_path,
+        sheets={
+            "EntityA": [
+                ["Item", "2026Q1"],
+                ["Rent collected", 100_000],
+            ],
+        },
+    )
     manifest = WorkbookManifestConfig(
         workbook_version="v1",
         expected_workbook_filename="synthetic_v1.xlsx",
         entity_sheets=[
             EntitySheetSpec(
-                sheet_name="EntityA", entity_id="entity_a",
-                entity_type="operating_llc", display_name="E",
+                sheet_name="EntityA",
+                entity_id="entity_a",
+                entity_type="operating_llc",
+                display_name="E",
                 cash_flow_role="operating",
             ),
         ],
@@ -462,25 +536,33 @@ def test_distributable_rows_become_producer_entries(tmp_path):
     """Phase 14 #10: workbook_version drives deterministic producer_id;
     workbook_hash is captured separately and NOT in producer_id."""
     wb_path = tmp_path / "synthetic_v1.xlsx"
-    _build_synthetic_workbook(wb_path, sheets={
-        "EntityA": [
-            ["Item", "2026Q1", "2026Q2"],
-            ["Rent collected", 200_000, 200_000],
-        ],
-    })
+    _build_synthetic_workbook(
+        wb_path,
+        sheets={
+            "EntityA": [
+                ["Item", "2026Q1", "2026Q2"],
+                ["Rent collected", 200_000, 200_000],
+            ],
+        },
+    )
     manifest = WorkbookManifestConfig(
         workbook_version="v7_2026Q2_forecast",
         expected_workbook_filename="synthetic_v1.xlsx",
         entity_sheets=[
             EntitySheetSpec(
-                sheet_name="EntityA", entity_id="bldg_a",
-                entity_type="real_estate_partnership", display_name="Bldg A",
+                sheet_name="EntityA",
+                entity_id="bldg_a",
+                entity_type="real_estate_partnership",
+                display_name="Bldg A",
                 cash_flow_role="operating",
                 row_classification_rules=[
                     RowClassificationRule(
                         row_label_pattern="rent collected",
-                        direction="inflow", category="rent", domain="real_estate",
-                        distributable_candidate=True, recurrence_type="recurring",
+                        direction="inflow",
+                        category="rent",
+                        domain="real_estate",
+                        distributable_candidate=True,
+                        recurrence_type="recurring",
                         certainty="contractual",
                     ),
                 ],
@@ -524,25 +606,33 @@ def test_owl_distributable_income_runs_with_workbook_producer(tmp_path):
     # Synthesize 8 quarters of $1M/qtr distributions.
     wb_path = tmp_path / "synthetic_v1.xlsx"
     quarters = [f"2026Q{q}" for q in (1, 2, 3, 4)] + [f"2027Q{q}" for q in (1, 2, 3, 4)]
-    _build_synthetic_workbook(wb_path, sheets={
-        "EntityA": [
-            ["Item", *quarters],
-            ["Rent collected", *([1_000_000] * 8)],
-        ],
-    })
+    _build_synthetic_workbook(
+        wb_path,
+        sheets={
+            "EntityA": [
+                ["Item", *quarters],
+                ["Rent collected", *([1_000_000] * 8)],
+            ],
+        },
+    )
     manifest = WorkbookManifestConfig(
         workbook_version="v1",
         expected_workbook_filename="synthetic_v1.xlsx",
         entity_sheets=[
             EntitySheetSpec(
-                sheet_name="EntityA", entity_id="bldg_a",
-                entity_type="real_estate_partnership", display_name="Bldg A",
+                sheet_name="EntityA",
+                entity_id="bldg_a",
+                entity_type="real_estate_partnership",
+                display_name="Bldg A",
                 cash_flow_role="operating",
                 row_classification_rules=[
                     RowClassificationRule(
                         row_label_pattern="rent collected",
-                        direction="inflow", category="rent", domain="real_estate",
-                        distributable_candidate=True, recurrence_type="recurring",
+                        direction="inflow",
+                        category="rent",
+                        domain="real_estate",
+                        distributable_candidate=True,
+                        recurrence_type="recurring",
                         certainty="contractual",
                     ),
                 ],
@@ -559,10 +649,13 @@ def test_owl_distributable_income_runs_with_workbook_producer(tmp_path):
         annual_spend_usd=4_000_000.0,
         inflation_pct=0.025,
         smoothing=SmoothingConfig(window_quarters=4, weight=0.5),
-        floor_usd=0.0, ceiling_usd=1.0e12,
+        floor_usd=0.0,
+        ceiling_usd=1.0e12,
         guardrail=GuardrailConfig(
-            upper_band_pct=0.20, lower_band_pct=0.20,
-            raise_pct=0.10, cut_pct=0.10,
+            upper_band_pct=0.20,
+            lower_band_pct=0.20,
+            raise_pct=0.10,
+            cut_pct=0.10,
             spending_base="distributable_income",
             distribution_window_quarters=4,
             bootstrap_distributable_income_usd=4_000_000.0,
@@ -572,7 +665,9 @@ def test_owl_distributable_income_runs_with_workbook_producer(tmp_path):
     start_q = pd.Period("2026Q1", freq="Q-DEC")
     L = QuarterlyLedger("t", initial_nav={"cash": 100_000_000.0}, start_quarter=start_q)
     params = SpendingParams(
-        config=spend_cfg, start_quarter=start_q, num_quarters=8,
+        config=spend_cfg,
+        start_quarter=start_q,
+        num_quarters=8,
     )
     for i in range(8):
         q = start_q + i
@@ -580,13 +675,19 @@ def test_owl_distributable_income_runs_with_workbook_producer(tmp_path):
         emissions, delta = producer.emit_for_quarter(q)
         for em in emissions:
             L.add(
-                quarter=q, bucket="cash", flow_type="distribution_inflow",
-                amount_usd=em.amount_usd, source=em.source,
+                quarter=q,
+                bucket="cash",
+                flow_type="distribution_inflow",
+                amount_usd=em.amount_usd,
+                source=em.source,
             )
         diag_acc.merge(delta)
         L.add(
-            quarter=q, bucket="cash", flow_type="spend",
-            amount_usd=-spend_amt, source=rule.SOURCE_ID,
+            quarter=q,
+            bucket="cash",
+            flow_type="spend",
+            amount_usd=-spend_amt,
+            source=rule.SOURCE_ID,
         )
 
     # Realized window at q4 = $4M (4 × $1M); zero-income guard does
@@ -609,26 +710,34 @@ def test_report_renders_workbook_ingestion_advisory(tmp_path, repo_root):
     from aa_model.io.loaders import load_study_config
 
     wb_path = tmp_path / "synthetic_v1.xlsx"
-    _build_synthetic_workbook(wb_path, sheets={
-        "EntityA": [
-            ["Item", "2026Q1", "2026Q2"],
-            ["Rent collected", 200_000, 200_000],
-            ["Total cash",     200_000, 200_000],   # subtotal — excluded
-        ],
-    })
+    _build_synthetic_workbook(
+        wb_path,
+        sheets={
+            "EntityA": [
+                ["Item", "2026Q1", "2026Q2"],
+                ["Rent collected", 200_000, 200_000],
+                ["Total cash", 200_000, 200_000],  # subtotal — excluded
+            ],
+        },
+    )
     manifest = WorkbookManifestConfig(
         workbook_version="v1",
         expected_workbook_filename="synthetic_v1.xlsx",
         entity_sheets=[
             EntitySheetSpec(
-                sheet_name="EntityA", entity_id="entity_a",
-                entity_type="operating_llc", display_name="Entity A",
+                sheet_name="EntityA",
+                entity_id="entity_a",
+                entity_type="operating_llc",
+                display_name="Entity A",
                 cash_flow_role="operating",
                 row_classification_rules=[
                     RowClassificationRule(
                         row_label_pattern="rent collected",
-                        direction="inflow", category="rent", domain="real_estate",
-                        distributable_candidate=True, recurrence_type="recurring",
+                        direction="inflow",
+                        category="rent",
+                        domain="real_estate",
+                        distributable_candidate=True,
+                        recurrence_type="recurring",
                         certainty="contractual",
                     ),
                 ],
@@ -641,13 +750,17 @@ def test_report_renders_workbook_ingestion_advisory(tmp_path, repo_root):
     cfg = load_study_config(repo_root / "configs" / "base.yaml")
     L = QuarterlyLedger(
         "test_p14",
-        initial_nav={b: 25_000_000.0 for b in ("cash", "public_bond", "public_equity", "pe_buyout")},
+        initial_nav={
+            b: 25_000_000.0 for b in ("cash", "public_bond", "public_equity", "pe_buyout")
+        },
         start_quarter=pd.Period("2026Q1", freq="Q-DEC"),
     )
     L.finalize()
     out = tmp_path / "report.md"
     write_markdown_report(
-        out, cfg=cfg, ledger=L,
+        out,
+        cfg=cfg,
+        ledger=L,
         run_id="test_phase14",
         config_hash="0" * 12,
         fixtures_hash="0" * 12,

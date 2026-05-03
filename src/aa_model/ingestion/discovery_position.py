@@ -47,46 +47,106 @@ from __future__ import annotations
 
 import datetime as _dt
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
 # ---- column candidate detection --------------------------------------------
 
-_VALUE_KEYWORDS = frozenset({
-    "market value", "mkt val", "nav", "fair value", "market val",
-    "value", "balance", "ending balance", "fair mkt", "end market",
-    "market", "mktvalue",
-})
-_COST_KEYWORDS = frozenset({
-    "cost basis", "cost", "book value", "book val", "acquisition cost",
-    "basis",
-})
-_COMMITMENT_KEYWORDS = frozenset({
-    "commitment", "unfunded", "remaining commit", "capital commit",
-    "uncalled",
-})
-_MANAGER_KEYWORDS = frozenset({
-    "manager", "fund manager", "gp", "advisor", "sponsor",
-    "general partner", "fund",
-})
-_ASSET_CLASS_KEYWORDS = frozenset({
-    "asset class", "asset_class", "category", "type", "strategy",
-    "sleeve", "class",
-})
-_NAME_KEYWORDS = frozenset({
-    "name", "fund name", "account", "investment", "security",
-    "description", "asset", "position",
-})
-_INCOME_KEYWORDS = frozenset({
-    "distribution", "income", "dividend", "yield", "dist",
-    "interest income",
-})
+_VALUE_KEYWORDS = frozenset(
+    {
+        "market value",
+        "mkt val",
+        "nav",
+        "fair value",
+        "market val",
+        "value",
+        "balance",
+        "ending balance",
+        "fair mkt",
+        "end market",
+        "market",
+        "mktvalue",
+    }
+)
+_COST_KEYWORDS = frozenset(
+    {
+        "cost basis",
+        "cost",
+        "book value",
+        "book val",
+        "acquisition cost",
+        "basis",
+    }
+)
+_COMMITMENT_KEYWORDS = frozenset(
+    {
+        "commitment",
+        "unfunded",
+        "remaining commit",
+        "capital commit",
+        "uncalled",
+    }
+)
+_MANAGER_KEYWORDS = frozenset(
+    {
+        "manager",
+        "fund manager",
+        "gp",
+        "advisor",
+        "sponsor",
+        "general partner",
+        "fund",
+    }
+)
+_ASSET_CLASS_KEYWORDS = frozenset(
+    {
+        "asset class",
+        "asset_class",
+        "category",
+        "type",
+        "strategy",
+        "sleeve",
+        "class",
+    }
+)
+_NAME_KEYWORDS = frozenset(
+    {
+        "name",
+        "fund name",
+        "account",
+        "investment",
+        "security",
+        "description",
+        "asset",
+        "position",
+    }
+)
+_INCOME_KEYWORDS = frozenset(
+    {
+        "distribution",
+        "income",
+        "dividend",
+        "yield",
+        "dist",
+        "interest income",
+    }
+)
 
-_STRUCTURAL_SHEET_KEYWORDS = frozenset({
-    "summary", "total", "overview", "aggregate", "allocation",
-    "dashboard", "cover", "index", "contents", "instructions",
-})
+_STRUCTURAL_SHEET_KEYWORDS = frozenset(
+    {
+        "summary",
+        "total",
+        "overview",
+        "aggregate",
+        "allocation",
+        "dashboard",
+        "cover",
+        "index",
+        "contents",
+        "instructions",
+    }
+)
 
 
 def _match_column_role(header: str) -> str | None:
@@ -123,8 +183,16 @@ def _detect_valuation_date_from_text(text: str) -> _dt.date | None:
         m = pat.search(str(text))
         if m:
             raw = m.group(1).strip()
-            for fmt in ("%B %d, %Y", "%B %d %Y", "%b %d, %Y", "%b %Y",
-                        "%B %Y", "%m/%d/%Y", "%m-%d-%Y", "%m/%d/%y"):
+            for fmt in (
+                "%B %d, %Y",
+                "%B %d %Y",
+                "%b %d, %Y",
+                "%b %Y",
+                "%B %Y",
+                "%m/%d/%Y",
+                "%m-%d-%Y",
+                "%m/%d/%y",
+            ):
                 try:
                     return _dt.datetime.strptime(raw, fmt).date()
                 except ValueError:
@@ -137,14 +205,14 @@ def _detect_valuation_date_from_text(text: str) -> _dt.date | None:
 
 @dataclass
 class ColumnCandidate:
-    column_index: int   # 0-indexed
-    header_text: str    # raw header string
+    column_index: int  # 0-indexed
+    header_text: str  # raw header string
     candidate_role: str  # e.g. "value_column_index", "manager", "income_candidate"
 
 
 @dataclass
 class SheetPositionDiscovery:
-    sheet_name_raw: str          # raw name; redacted in privacy_safe output
+    sheet_name_raw: str  # raw name; redacted in privacy_safe output
     sheet_index: int
     role: Literal["account_sheet", "aggregate_summary", "display_only"]
     max_row: int
@@ -241,10 +309,7 @@ def discover_investment_summary(path: Path) -> InvestmentSummaryDiscoveryResult:
                     header_row_index = row_idx
 
             # Classify sheet role
-            has_value_col = any(
-                c.candidate_role == "value_column_index"
-                for c in column_candidates
-            )
+            has_value_col = any(c.candidate_role == "value_column_index" for c in column_candidates)
             if is_structural or max_row < 3:
                 role: Literal["account_sheet", "aggregate_summary", "display_only"]
                 role = "aggregate_summary" if is_structural else "display_only"
@@ -302,7 +367,6 @@ def build_draft_position_manifest(
     local_private: real sheet names preserved; CLI enforces gitignored path.
     income_cash_flow_flag proposals marked ``# PROPOSED`` (T4).
     """
-    import io
 
     effective_date = as_of_date or discovery.detected_as_of_date
     date_str = str(effective_date) if effective_date else "<TODO_as_of_date>"
@@ -315,9 +379,9 @@ def build_draft_position_manifest(
         "#",
         "# income_cash_flow_flag proposals are marked # PROPOSED — confirm before use.",
         "#",
-        f"manifest_version: '1'",
+        "manifest_version: '1'",
         f"workbook_version: '{workbook_version}'",
-        f"expected_filename: '<TODO_filename>'",
+        "expected_filename: '<TODO_filename>'",
         f"as_of_date: '{date_str}'",
         "accounts:",
     ]
@@ -339,55 +403,42 @@ def build_draft_position_manifest(
 
         # Find best value column candidate
         value_cols = [
-            c for c in sheet.column_candidates
-            if c.candidate_role == "value_column_index"
+            c for c in sheet.column_candidates if c.candidate_role == "value_column_index"
         ]
         value_col = value_cols[0].column_index if value_cols else 1
 
-        name_cols = [
-            c for c in sheet.column_candidates
-            if c.candidate_role == "name_column_index"
-        ]
+        name_cols = [c for c in sheet.column_candidates if c.candidate_role == "name_column_index"]
         name_col = name_cols[0].column_index if name_cols else 0
 
         header_idx = sheet.header_row_index if sheet.header_row_index is not None else 0
 
         lines += [
             f"  - account_id: '{account_id_out}'",
-            f"    entity_id: '<TODO_entity_id>'",
+            "    entity_id: '<TODO_entity_id>'",
             f"    sheet_name: '{sheet_name_out}'",
-            f"    layout_type: flat_position",
+            "    layout_type: flat_position",
             f"    header_row_index: {header_idx}",
             f"    value_column_index: {value_col}",
             f"    name_column_index: {name_col}",
-            f"    position_column_mappings: {{}}  # <TODO: map field → column_index>",
+            "    position_column_mappings: {}  # <TODO: map field → column_index>",
         ]
 
         # Valuation date from discovery
         if sheet.detected_valuation_date:
-            lines.append(
-                f"    valuation_date: '{sheet.detected_valuation_date}'"
-            )
+            lines.append(f"    valuation_date: '{sheet.detected_valuation_date}'")
         else:
-            lines.append(
-                f"    valuation_date: null  # falls back to manifest as_of_date"
-            )
+            lines.append("    valuation_date: null  # falls back to manifest as_of_date")
 
         # T4: income_cash_flow_flag proposals in local_private mode
         if mode == "local_private" and sheet.income_flag_candidates:
             income_proposals_total += len(sheet.income_flag_candidates)
-            lines.append(
-                "    # PROPOSED income_cash_flow_flag columns (confirm before use):"
-            )
+            lines.append("    # PROPOSED income_cash_flow_flag columns (confirm before use):")
             for col_idx in sheet.income_flag_candidates:
                 col_header = next(
-                    (c.header_text for c in sheet.column_candidates
-                     if c.column_index == col_idx),
+                    (c.header_text for c in sheet.column_candidates if c.column_index == col_idx),
                     f"col_{col_idx}",
                 )
-                lines.append(
-                    f"    # income_candidate_col_{col_idx}: '{col_header}'"
-                )
+                lines.append(f"    # income_candidate_col_{col_idx}: '{col_header}'")
 
     lines += [
         "manager_terms: []  # <TODO: human-authored; see ManagerTermsRecord schema>",

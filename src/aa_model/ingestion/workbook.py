@@ -122,9 +122,7 @@ def _is_subtotal_row(label: str, patterns: list[str]) -> bool:
     return False
 
 
-def _classify_row(
-    label: str, rules: list[RowClassificationRule]
-) -> RowClassificationRule | None:
+def _classify_row(label: str, rules: list[RowClassificationRule]) -> RowClassificationRule | None:
     """First-match-wins case-insensitive substring matcher."""
     if not rules:
         return None
@@ -180,9 +178,7 @@ def ingest_workbook(
 
     path = Path(workbook_path).resolve()
     if not path.is_file():
-        raise FileNotFoundError(
-            f"workbook not found at resolved path: {path}"
-        )
+        raise FileNotFoundError(f"workbook not found at resolved path: {path}")
 
     workbook_hash = _hash_workbook_bytes(path)
     workbook_filename = path.name
@@ -206,36 +202,23 @@ def ingest_workbook(
 
         # Build the role index up front so we can detect missing
         # required sheets and unmapped sheets cleanly.
-        entity_specs: dict[str, EntitySheetSpec] = {
-            s.sheet_name: s for s in manifest.entity_sheets
-        }
+        entity_specs: dict[str, EntitySheetSpec] = {s.sheet_name: s for s in manifest.entity_sheets}
         re_specs: dict[str, REPartnershipSheetSpec] = {
             s.sheet_name: s for s in manifest.re_partnership_sheets
         }
         family_aggregate = set(manifest.family_aggregate_sheets)
         board_snapshots = set(manifest.board_snapshot_sheets)
 
-        all_mapped = (
-            set(entity_specs)
-            | set(re_specs)
-            | family_aggregate
-            | board_snapshots
-        )
+        all_mapped = set(entity_specs) | set(re_specs) | family_aggregate | board_snapshots
 
         # Required sheets: every entity_sheet, every re_partnership_sheet,
         # every family_aggregate_sheet, every board_snapshot_sheet must
         # be present. Missing → hard error.
-        required = (
-            set(entity_specs)
-            | set(re_specs)
-            | family_aggregate
-            | board_snapshots
-        )
+        required = set(entity_specs) | set(re_specs) | family_aggregate | board_snapshots
         missing_required = sorted(required - set(all_sheet_names))
         if missing_required:
             raise ValueError(
-                f"workbook missing required sheet(s) declared in manifest: "
-                f"{missing_required}"
+                f"workbook missing required sheet(s) declared in manifest: " f"{missing_required}"
             )
 
         # Unmapped: present in the workbook but not declared anywhere
@@ -333,9 +316,7 @@ def _ingest_entity_sheet(
     # snapshots when declared as entity sheets, ownership graphs).
     # The unmapped-sheets diagnostic gets a sibling tracker for these.
     if spec.layout_type == "display_only":
-        result.diagnostics.missing_optional_sheets.append(
-            f"display_only:{sheet_name}"
-        )
+        result.diagnostics.missing_optional_sheets.append(f"display_only:{sheet_name}")
         return
 
     # Resolve effective layout knobs from spec → manifest defaults.
@@ -379,8 +360,7 @@ def _ingest_entity_sheet(
     asset_id_by_row_label: dict[str, str] = {}
     if isinstance(spec, REPartnershipSheetSpec):
         asset_id_by_row_label = {
-            label.strip().lower(): aid
-            for label, aid in spec.asset_id_by_row_label.items()
+            label.strip().lower(): aid for label, aid in spec.asset_id_by_row_label.items()
         }
 
     # Track (entity_id, quarter, row_label) to detect duplicates.
@@ -521,9 +501,11 @@ def _ingest_entity_sheet(
             if asset_id_by_row_label:
                 aid = asset_id_by_row_label.get(label.strip().lower())
                 if aid is not None:
-                    line = line.model_copy(update={
-                        "source_reference": f"asset_id={aid}|{line.source_reference}",
-                    })
+                    line = line.model_copy(
+                        update={
+                            "source_reference": f"asset_id={aid}|{line.source_reference}",
+                        }
+                    )
 
             result.cash_flow_lines.append(line)
 
@@ -597,9 +579,7 @@ def _reconcile_aggregate_sheet(
                 detail_total += amount
 
     abs_delta = abs(snapshot_total - detail_total)
-    abs_delta_pct = (
-        abs_delta / abs(snapshot_total) * 100.0 if snapshot_total != 0.0 else 0.0
-    )
+    abs_delta_pct = abs_delta / abs(snapshot_total) * 100.0 if snapshot_total != 0.0 else 0.0
     result.diagnostics.board_snapshot_reconciliations.append(
         (
             sheet_name,
@@ -621,13 +601,9 @@ def _finalize_diagnostics(result: IngestionResult) -> None:
         if line.direction == "inflow":
             inflows[line.entity_id] = inflows.get(line.entity_id, 0.0) + line.amount_usd
         else:
-            outflows[line.entity_id] = (
-                outflows.get(line.entity_id, 0.0) + line.amount_usd
-            )
+            outflows[line.entity_id] = outflows.get(line.entity_id, 0.0) + line.amount_usd
     diag.total_inflows_usd_by_entity = {k: float(v) for k, v in sorted(inflows.items())}
-    diag.total_outflows_usd_by_entity = {
-        k: float(v) for k, v in sorted(outflows.items())
-    }
+    diag.total_outflows_usd_by_entity = {k: float(v) for k, v in sorted(outflows.items())}
 
     candidates_by_domain: dict[str, float] = {}
     cand_count = 0
@@ -750,7 +726,7 @@ def workbook_lines_to_producer_config(
                 confidence=line.certainty,
                 restricted=False,
                 source_reference=f"workbook={result.diagnostics.workbook_filename}|"
-                                 f"sheet={line.sheet_name}|row={line.row_label}",
+                f"sheet={line.sheet_name}|row={line.row_label}",
             )
         )
         domain_by_domain_count[rule.domain] = (

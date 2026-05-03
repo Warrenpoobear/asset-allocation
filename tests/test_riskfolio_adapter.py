@@ -150,7 +150,12 @@ def test_riskfolio_consumes_explicit_cma_not_fallback():
     def _cma_with(vol_equity: float) -> CMA:
         idx = sorted(buckets)
         # Same vols as the fallback table for everything except equity.
-        vol_table = {"cash": 0.005, "public_bond": 0.04, "public_equity": vol_equity, "pe_buyout": 0.20}
+        vol_table = {
+            "cash": 0.005,
+            "public_bond": 0.04,
+            "public_equity": vol_equity,
+            "pe_buyout": 0.20,
+        }
         vol = pd.Series([vol_table[b] for b in idx], index=idx, dtype=float)
         er = pd.Series(0.0, index=idx, dtype=float)
         corr = pd.DataFrame(np.eye(len(idx)), index=idx, columns=idx)
@@ -164,9 +169,9 @@ def test_riskfolio_consumes_explicit_cma_not_fallback():
     w_high = adapter_high.weights()
 
     # Higher equity vol → MinRisk shifts weight away from public_equity.
-    assert w_high["public_equity"] < w_low["public_equity"] - 1e-6, (
-        f"adapter ignored explicit CMA: w_low={w_low.to_dict()}, w_high={w_high.to_dict()}"
-    )
+    assert (
+        w_high["public_equity"] < w_low["public_equity"] - 1e-6
+    ), f"adapter ignored explicit CMA: w_low={w_low.to_dict()}, w_high={w_high.to_dict()}"
 
 
 def test_weights_returned_are_a_copy():

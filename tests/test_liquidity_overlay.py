@@ -49,9 +49,7 @@ def test_liquid_renormalisation_hand_worked():
     """
     policy = _series({"cash": 0.05, "public_bond": 0.20, "public_equity": 0.50, "pe": 0.25})
     # Use $1 as V_total for arithmetic clarity.
-    current = _series(
-        {"cash": 0.03, "public_bond": 0.18, "public_equity": 0.44, "pe": 0.35}
-    )
+    current = _series({"cash": 0.03, "public_bond": 0.18, "public_equity": 0.44, "pe": 0.35})
     liquidity = _series(
         {"cash": "liquid", "public_bond": "liquid", "public_equity": "liquid", "pe": "illiquid"},
         dtype=object,
@@ -63,10 +61,10 @@ def test_liquid_renormalisation_hand_worked():
     )
 
     expected = {
-        "cash":          0.65 * (0.05 / 0.75),
-        "public_bond":   0.65 * (0.20 / 0.75),
+        "cash": 0.65 * (0.05 / 0.75),
+        "public_bond": 0.65 * (0.20 / 0.75),
         "public_equity": 0.65 * (0.50 / 0.75),
-        "pe":            0.35,
+        "pe": 0.35,
     }
     for b, e in expected.items():
         assert abs(float(exec_w[b]) - e) < 1e-12, f"{b}: got {float(exec_w[b])}, expected {e}"
@@ -86,9 +84,7 @@ def test_overlay_pins_pe_at_current_when_below_target():
     """
     policy = _series({"cash": 0.05, "public_bond": 0.20, "public_equity": 0.50, "pe": 0.25})
     # PE is at $0 (just-issued fund vintage, no calls yet).
-    current = _series(
-        {"cash": 0.20, "public_bond": 0.30, "public_equity": 0.50, "pe": 0.0}
-    )
+    current = _series({"cash": 0.20, "public_bond": 0.30, "public_equity": 0.50, "pe": 0.0})
     liquidity = _series(
         {"cash": "liquid", "public_bond": "liquid", "public_equity": "liquid", "pe": "illiquid"},
         dtype=object,
@@ -244,9 +240,7 @@ def test_liquid_nav_zero_with_nonzero_liquid_current_fails_loudly():
     current2 = _series({"cash": 50.0, "bond": -50.0, "pe": 100.0})
     # V_total = 50 - 50 + 100 = 100; illiq = 100; liquid_nav = 0;
     # but bond = -50 != 0. Should fail.
-    liquidity2 = _series(
-        {"cash": "liquid", "bond": "liquid", "pe": "illiquid"}, dtype=object
-    )
+    liquidity2 = _series({"cash": "liquid", "bond": "liquid", "pe": "illiquid"}, dtype=object)
     with pytest.raises(ValueError, match="liquid_nav ≈ 0"):
         apply_liquidity_overlay(
             policy_weights=policy2,
@@ -332,9 +326,7 @@ def test_default_on_run_has_zero_pe_rebalance_rows(base_config_path):
 
     result = run_orchestrator(base_config_path, dry_run=True)
     df = result.ledger
-    pe_rb = df[
-        (df["flow_type"] == "rebalance") & df["bucket"].str.startswith("pe_")
-    ]
+    pe_rb = df[(df["flow_type"] == "rebalance") & df["bucket"].str.startswith("pe_")]
     assert len(pe_rb) == 0, (
         f"L8 violated: {len(pe_rb)} rebalance rows on pe_* buckets, "
         f"sum |amount| = {float(pe_rb['amount_usd'].abs().sum())}"
@@ -375,13 +367,8 @@ def test_internal_opt_out_reproduces_pre_l8_behavior(repo_root: Path):
     try:
         result = run_orchestrator(base_path, dry_run=True)
         df = result.ledger
-        pe_rb = df[
-            (df["flow_type"] == "rebalance")
-            & df["bucket"].str.startswith("pe_")
-        ]
-        assert len(pe_rb) > 0, (
-            "internal opt-out failed to reproduce pre-L8 PE rebalancing"
-        )
+        pe_rb = df[(df["flow_type"] == "rebalance") & df["bucket"].str.startswith("pe_")]
+        assert len(pe_rb) > 0, "internal opt-out failed to reproduce pre-L8 PE rebalancing"
     finally:
         base_path.unlink(missing_ok=True)
 

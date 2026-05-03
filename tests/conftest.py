@@ -186,9 +186,7 @@ def with_cvxportfolio_allocation_config(repo_root):
     base_dst = configs / "_test_cvxportfolio_allocation.yaml"
     base_dst.write_text(yaml.safe_dump(base_cfg), encoding="utf-8")
 
-    public_alloc = yaml.safe_load(
-        (configs / "public_allocation.yaml").read_text(encoding="utf-8")
-    )
+    public_alloc = yaml.safe_load((configs / "public_allocation.yaml").read_text(encoding="utf-8"))
     # Base config governance.size_usd is $100M; setting λ_norm = 1e9 gives
     # λ_eff = 1e-7 (= 1e9 / (1e8)²) so the integration test reproduces the
     # cost-aware behavior used pre-normalization. See MODEL_DOCUMENTATION

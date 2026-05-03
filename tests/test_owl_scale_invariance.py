@@ -102,9 +102,7 @@ def _drive_owl(
         start_quarter=_q("2026Q1"),
     )
     n_quarters = len(returns_per_quarter)
-    params = SpendingParams(
-        config=cfg, start_quarter=_q("2026Q1"), num_quarters=n_quarters
-    )
+    params = SpendingParams(config=cfg, start_quarter=_q("2026Q1"), num_quarters=n_quarters)
     nav = initial_nav_total
     trajectory: list[float] = []
     for i, ret in enumerate(returns_per_quarter):
@@ -261,8 +259,7 @@ def test_owl_path_is_scale_invariant_in_initial_nav():
     for s, l_ in zip(quarterly_small, quarterly_large, strict=False):
         assert s > 0
         assert abs(l_ / s - 10.0) < 1e-9, (
-            f"scale-invariance broken: small={s}, large={l_}, "
-            f"ratio={l_ / s} expected 10.0"
+            f"scale-invariance broken: small={s}, large={l_}, " f"ratio={l_ / s} expected 10.0"
         )
 
 
@@ -286,12 +283,8 @@ def test_owl_diverges_under_absolute_floor():
     # the floor → clamp to $3.6M). The large fund's analogous
     # trajectory is at ~$30M, nowhere near the $3.6M floor.
     floor_usd = 3_600_000.0
-    cfg_small = _spending_cfg(
-        annual_spend_usd=4_000_000.0, absolute_min_annual_usd=floor_usd
-    )
-    cfg_large = _spending_cfg(
-        annual_spend_usd=40_000_000.0, absolute_min_annual_usd=floor_usd
-    )
+    cfg_small = _spending_cfg(annual_spend_usd=4_000_000.0, absolute_min_annual_usd=floor_usd)
+    cfg_large = _spending_cfg(annual_spend_usd=40_000_000.0, absolute_min_annual_usd=floor_usd)
 
     rule_small = OwlRule()
     rule_large = OwlRule()
@@ -328,9 +321,9 @@ def test_owl_diverges_under_absolute_floor():
     # small-fund clamp binds — direct proof that L16 invariance is
     # broken when the absolute clamp is set.
     ratios = [l_ / s for s, l_ in zip(quarterly_small, quarterly_large, strict=False) if s > 0]
-    assert max(ratios) - min(ratios) > 0.5, (
-        f"trajectories did not diverge under floor; ratios = {ratios}"
-    )
+    assert (
+        max(ratios) - min(ratios) > 0.5
+    ), f"trajectories did not diverge under floor; ratios = {ratios}"
 
 
 # ---- 7. Cut-path floor binding via prior-spend feedback --------------------
@@ -351,9 +344,7 @@ def test_cut_path_pins_at_absolute_floor_via_prior_feedback():
     floor_usd = 3_700_000.0  # $3.7M; first cut to $3.69M ≈ at floor
     returns = [-0.20] * 4 + [-0.10] * 4 + [-0.05] * 4 + [0.0] * 4
 
-    cfg = _spending_cfg(
-        annual_spend_usd=4_000_000.0, absolute_min_annual_usd=floor_usd
-    )
+    cfg = _spending_cfg(annual_spend_usd=4_000_000.0, absolute_min_annual_usd=floor_usd)
     rule = OwlRule()
     trajectory, _ = _drive_owl(
         rule,
@@ -373,18 +364,14 @@ def test_cut_path_pins_at_absolute_floor_via_prior_feedback():
     # demonstrating that the clamped value rides through the prior-
     # spend feedback loop (the next year's prior_annual reads
     # absolute_min_annual_usd, not the unclamped trajectory).
-    pinned_count = sum(
-        1 for v in trajectory if abs(v - floor_quarterly) < 1.0
-    )
+    pinned_count = sum(1 for v in trajectory if abs(v - floor_quarterly) < 1.0)
     assert pinned_count >= 8, (
         f"floor only binded {pinned_count} quarters; expected ≥ 8 "
         f"(at least two full years of pinning). Trajectory: {trajectory}"
     )
     # Diagnostic counter reflects activations.
     diag = rule.diagnostics()
-    assert diag["min_clamp_activations"] > 0, (
-        f"min_clamp_activations should be > 0; diag = {diag}"
-    )
+    assert diag["min_clamp_activations"] > 0, f"min_clamp_activations should be > 0; diag = {diag}"
 
 
 # ---- 8. Report diagnostic renders + L19 caveat verbatim -------------------

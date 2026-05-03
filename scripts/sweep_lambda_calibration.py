@@ -159,9 +159,11 @@ def _end_nav_by_quarter_per_bucket(ledger_df: pd.DataFrame) -> pd.DataFrame:
     """End-of-quarter NAV per bucket (rows = quarter, cols = bucket)."""
     if ledger_df.empty:
         return pd.DataFrame()
-    last = ledger_df.sort_values(["quarter", "bucket"]).groupby(
-        ["quarter", "bucket"], sort=True
-    ).tail(1)
+    last = (
+        ledger_df.sort_values(["quarter", "bucket"])
+        .groupby(["quarter", "bucket"], sort=True)
+        .tail(1)
+    )
     wide = last.pivot(index="quarter", columns="bucket", values="nav_end_usd")
     return wide.sort_index()
 
@@ -277,9 +279,7 @@ def _compute_cell_metrics(
     }
 
 
-def _run_one(
-    repo_root: Path, lambda_norm: float, bps: float, scenario_name: str
-) -> CellResult:
+def _run_one(repo_root: Path, lambda_norm: float, bps: float, scenario_name: str) -> CellResult:
     tag = f"l{str(lambda_norm).replace('.', '_')}_b{int(bps)}_{scenario_name}"
     base_path = _write_combo_configs(repo_root, lambda_norm, bps, tag)
     try:
@@ -393,9 +393,7 @@ def _format_report(rows: list[CellResult], elapsed_s: float) -> str:
     )
 
     if n_fail:
-        fails = df[df["status"] != "ok"][
-            ["lambda_norm", "bps", "scenario", "status", "error"]
-        ]
+        fails = df[df["status"] != "ok"][["lambda_norm", "bps", "scenario", "status", "error"]]
         out.append("## Failures\n\n")
         out.append("```\n" + fails.to_string(index=False) + "\n```\n\n")
 
@@ -408,7 +406,7 @@ def _format_report(rows: list[CellResult], elapsed_s: float) -> str:
         "Each metric's section has three pivot blocks (one per scenario). "
         "Rows are λ_norm; columns are bps_per_trade. The cell at `(λ_norm, "
         "bps) = (1.0, 5)` is the closest the engine gets to "
-        "\"production-typical\" — default λ at a realistic 5 bps trading "
+        '"production-typical" — default λ at a realistic 5 bps trading '
         "cost.\n\n"
     )
 

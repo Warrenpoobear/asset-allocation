@@ -141,12 +141,12 @@ class LiquidityCoverageResult:
 
     # Coverage ratios (NAV-denominator modes)
     liquid_to_annual_spend: float | None
-    liquid_to_spending_base: float | None    # T5: None when base is flow-type
+    liquid_to_spending_base: float | None  # T5: None when base is flow-type
     liquid_to_next12m_obligations: float | None
     capital_call_coverage: float | None
     liquid_fraction_of_nav: float | None
     illiquid_fraction_of_nav: float | None
-    liquidity_runway_quarters: int | None   # T3: liquid-only; semi-liquid excluded
+    liquidity_runway_quarters: int | None  # T3: liquid-only; semi-liquid excluded
 
     # T5: stock-to-flow metric for distributable_income mode
     liquid_nav_to_annual_income_estimate: float | None
@@ -177,7 +177,7 @@ def compute_liquidity_coverage(
     *,
     tier_overrides: dict[str, str] | None = None,
     manager_terms: list[ManagerTermsRecord] | None = None,
-    spending_base: "SpendingBaseBreakdown | None" = None,
+    spending_base: SpendingBaseBreakdown | None = None,
     spending_base_is_flow: bool = False,
     stale_nav_count: int = 0,
     untagged_position_count: int = 0,
@@ -214,9 +214,7 @@ def compute_liquidity_coverage(
         when ``None``.
     """
     cfg = config or LiquidityCoverageConfig()
-    manager_by_id: dict[str, ManagerTermsRecord] = {
-        m.manager_id: m for m in (manager_terms or [])
-    }
+    manager_by_id: dict[str, ManagerTermsRecord] = {m.manager_id: m for m in (manager_terms or [])}
 
     # ---- tier NAV aggregates -----------------------------------------------
 
@@ -263,9 +261,7 @@ def compute_liquidity_coverage(
 
     # T5: stock-to-flow metric for distributable_income mode
     if spending_base is not None and spending_base_is_flow:
-        liquid_nav_to_annual_income_estimate = _safe_divide(
-            liquid_nav, spending_base.base_usd
-        )
+        liquid_nav_to_annual_income_estimate = _safe_divide(liquid_nav, spending_base.base_usd)
     else:
         liquid_nav_to_annual_income_estimate = None
 
@@ -279,9 +275,7 @@ def compute_liquidity_coverage(
     next12m_total: float | None = sum(known_parts) if known_parts else None
 
     liquid_to_next12m = _safe_divide(liquid_nav, next12m_total)
-    capital_call_coverage = _safe_divide(
-        liquid_nav, obligations.next_12m_capital_calls_usd
-    )
+    capital_call_coverage = _safe_divide(liquid_nav, obligations.next_12m_capital_calls_usd)
 
     liquid_fraction = _safe_divide(liquid_nav, total_nav)
     illiquid_fraction = _safe_divide(illiquid_nav + locked_nav, total_nav)
@@ -363,10 +357,7 @@ def _build_diagnostics(
             f"breach threshold {cfg.liquid_coverage_breach_threshold:.1f}"
         )
 
-    if (
-        liquid_to_next12m is not None
-        and liquid_to_next12m < cfg.liquid_coverage_breach_threshold
-    ):
+    if liquid_to_next12m is not None and liquid_to_next12m < cfg.liquid_coverage_breach_threshold:
         breaches.append(
             f"liquid_to_next12m_obligations={liquid_to_next12m:.2f} < "
             f"breach threshold {cfg.liquid_coverage_breach_threshold:.1f}"
@@ -393,19 +384,14 @@ def _build_diagnostics(
             f"{cfg.capital_call_coverage_warning_ratio:.1f}"
         )
 
-    if (
-        illiquid_fraction is not None
-        and illiquid_fraction > cfg.illiquid_concentration_warning_pct
-    ):
+    if illiquid_fraction is not None and illiquid_fraction > cfg.illiquid_concentration_warning_pct:
         warnings.append(
             f"illiquid+locked_strategic fraction={illiquid_fraction:.1%} > "
             f"{cfg.illiquid_concentration_warning_pct:.0%} concentration threshold"
         )
 
     if untagged_position_count >= cfg.missing_bucket_warning_threshold:
-        warnings.append(
-            f"{untagged_position_count} position(s) missing liquidity_bucket tag"
-        )
+        warnings.append(f"{untagged_position_count} position(s) missing liquidity_bucket tag")
 
     # Advisories
     if obligations.annual_spend_usd is None:
@@ -438,9 +424,7 @@ def _build_diagnostics(
         )
 
     if stale_nav_count > 0:
-        advisories.append(
-            f"{stale_nav_count} position(s) have stale NAV (> 90 days old)"
-        )
+        advisories.append(f"{stale_nav_count} position(s) have stale NAV (> 90 days old)")
 
     return LiquidityCoverageDiagnostics(
         breaches=breaches,
@@ -507,12 +491,15 @@ def render_coverage_report_section(
         "",
         "  Coverage ratios:",
         f"    liquid / annual_spend:     {_fmt_ratio(result.liquid_to_annual_spend)}",
-        f"    {spending_base_label}:".ljust(38)
-        + f"{_fmt_ratio(result.liquid_to_spending_base)}",
+        f"    {spending_base_label}:".ljust(38) + f"{_fmt_ratio(result.liquid_to_spending_base)}",
         f"    liquid / next12m_oblig:    {_fmt_ratio(result.liquid_to_next12m_obligations)}",
         f"    capital_call_coverage:     {_fmt_ratio(result.capital_call_coverage)}",
-        f"    liquidity_runway:          "
-        + (f"{result.liquidity_runway_quarters} quarters" if result.liquidity_runway_quarters is not None else "n/a"),
+        "    liquidity_runway:          "
+        + (
+            f"{result.liquidity_runway_quarters} quarters"
+            if result.liquidity_runway_quarters is not None
+            else "n/a"
+        ),
     ]
 
     if result.liquid_nav_to_annual_income_estimate is not None:
@@ -526,19 +513,21 @@ def render_coverage_report_section(
         "  Semi-liquid advisory (T3 — not in breach coverage or runway):",
         f"    known_terms:               {_fmt_nav(result.semi_liquid_nav_with_known_terms)}",
         f"    terms_unknown:             {_fmt_nav(result.semi_liquid_nav_terms_unknown)}",
-        f"    earliest_notice_days:      "
-        + (str(result.semi_liquid_earliest_notice_days) if result.semi_liquid_earliest_notice_days is not None else "n/a"),
+        "    earliest_notice_days:      "
+        + (
+            str(result.semi_liquid_earliest_notice_days)
+            if result.semi_liquid_earliest_notice_days is not None
+            else "n/a"
+        ),
         "",
     ]
 
     d = result.diagnostics
     lines.append(
-        f"  BREACHES ({len(d.breaches)}): "
-        + ("; ".join(d.breaches) if d.breaches else "none")
+        f"  BREACHES ({len(d.breaches)}): " + ("; ".join(d.breaches) if d.breaches else "none")
     )
     lines.append(
-        f"  WARNINGS ({len(d.warnings)}): "
-        + ("; ".join(d.warnings) if d.warnings else "none")
+        f"  WARNINGS ({len(d.warnings)}): " + ("; ".join(d.warnings) if d.warnings else "none")
     )
     lines.append(
         f"  ADVISORIES ({len(d.advisories)}): "

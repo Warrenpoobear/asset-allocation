@@ -31,7 +31,6 @@ diagnostics only.
 from __future__ import annotations
 
 import argparse
-import sys
 from pathlib import Path
 
 from aa_model.ingestion.discovery import (
@@ -39,7 +38,6 @@ from aa_model.ingestion.discovery import (
     discover_workbook,
     render_aggregate_diagnostics,
 )
-
 
 _LOCAL_PRIVATE_PATH_HINTS: tuple[str, ...] = (
     "_local.yaml",
@@ -114,9 +112,7 @@ def main(argv: list[str] | None = None) -> int:
 
     workbook = Path(args.workbook)
     discovery = discover_workbook(workbook)
-    draft = build_draft_manifest(
-        discovery, mode=args.mode, workbook_version=args.workbook_version
-    )
+    draft = build_draft_manifest(discovery, mode=args.mode, workbook_version=args.workbook_version)
 
     diag = render_aggregate_diagnostics(discovery, draft)
 
@@ -150,10 +146,7 @@ def main(argv: list[str] | None = None) -> int:
             "committed scaffold or public review.)"
         )
     else:
-        print(
-            "  (local_private mode — real sheet names preserved; "
-            "do NOT commit this file.)"
-        )
+        print("  (local_private mode — real sheet names preserved; " "do NOT commit this file.)")
     return 0
 
 

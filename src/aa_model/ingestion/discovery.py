@@ -56,14 +56,11 @@ This module never:
 
 from __future__ import annotations
 
-import datetime as _dt
 import hashlib
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
-
-import pandas as pd
 
 from aa_model.ingestion.schemas import (
     EntitySheetSpec,
@@ -92,7 +89,10 @@ _MIN_LABEL_ROWS_FOR_ENTITY: int = 3
 # Role-keyword classifier. Lowercase substring match; first-hit wins.
 # Ordered so structural / unambiguous keywords precede entity guesses.
 _ROLE_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("family_aggregate", ("summary", "family aggregate", "aggregate", "rollup", "roll-up", "cash flow", "cashflow")),
+    (
+        "family_aggregate",
+        ("summary", "family aggregate", "aggregate", "rollup", "roll-up", "cash flow", "cashflow"),
+    ),
     ("board_snapshot", ("board", "snapshot", "snap")),
     ("assumptions_metadata", ("assumption", "notes", "note", "legend", "instructions")),
     ("ownership_structure", ("ownership", "structure", "org chart", "org-chart", "tree")),
@@ -109,8 +109,8 @@ _ROLE_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
 class HeaderCandidate:
     """One candidate header row + the format that won on it."""
 
-    row_index: int                     # 1-indexed
-    period_header_format: str          # "yyyy_q" | "q_yy" | "q_yyyy" | "calendar_qe"
+    row_index: int  # 1-indexed
+    period_header_format: str  # "yyyy_q" | "q_yy" | "q_yyyy" | "calendar_qe"
     parseable_count: int
 
 
@@ -128,11 +128,11 @@ class SheetDiscovery:
     sheet_name_safe: str
     max_row: int
     max_col: int
-    role: str                          # see _ROLE_KEYWORDS + "entity_sheet" / "unknown"
-    role_confidence: float             # 0.0 .. 1.0
-    layout_type: str                   # "horizontal_quarter" | "display_only" | "unknown"
+    role: str  # see _ROLE_KEYWORDS + "entity_sheet" / "unknown"
+    role_confidence: float  # 0.0 .. 1.0
+    layout_type: str  # "horizontal_quarter" | "display_only" | "unknown"
     header_candidate: HeaderCandidate | None
-    label_column: int                  # 1-indexed; column A by default
+    label_column: int  # 1-indexed; column A by default
     label_row_count: int
     subtotal_row_count: int
     parsed_quarter_first: str | None
@@ -144,7 +144,7 @@ class SheetDiscovery:
 class WorkbookDiscoveryResult:
     workbook_path: str
     workbook_filename: str
-    workbook_hash: str                 # SHA256 hex digest of raw bytes
+    workbook_hash: str  # SHA256 hex digest of raw bytes
     total_sheets: int
     sheets: list[SheetDiscovery] = field(default_factory=list)
 
@@ -162,11 +162,11 @@ class DraftManifestResult:
     """Output of :func:`build_draft_manifest`."""
 
     manifest: WorkbookManifestConfig
-    mode: str                          # "privacy_safe" | "local_private"
+    mode: str  # "privacy_safe" | "local_private"
     redacted_sheet_count: int
-    unresolved_sheets: list[str]        # sheet_name_safe of sheets the
-                                        # generator couldn't bucket into
-                                        # a manifest field
+    unresolved_sheets: list[str]  # sheet_name_safe of sheets the
+    # generator couldn't bucket into
+    # a manifest field
 
 
 # ---- privacy redaction -----------------------------------------------------
@@ -178,11 +178,25 @@ class DraftManifestResult:
 # "opco" / "partnership" — those are common but the abbreviations
 # preceding them often decode to family-internal initials.
 _STRUCTURAL_PRIVACY_KEYWORDS: tuple[str, ...] = (
-    "summary", "family aggregate", "aggregate", "rollup", "roll-up",
-    "cash flow", "cashflow",
-    "board", "snapshot", "snap",
-    "assumption", "notes", "legend", "instructions",
-    "ownership", "structure", "org chart", "org-chart", "tree",
+    "summary",
+    "family aggregate",
+    "aggregate",
+    "rollup",
+    "roll-up",
+    "cash flow",
+    "cashflow",
+    "board",
+    "snapshot",
+    "snap",
+    "assumption",
+    "notes",
+    "legend",
+    "instructions",
+    "ownership",
+    "structure",
+    "org chart",
+    "org-chart",
+    "tree",
 )
 
 
@@ -203,10 +217,7 @@ def _looks_personal_shaped(name: str) -> bool:
         if not t.isalpha():
             return False  # contains digits — likely a year/code, not a name
         # TitleCase, ALLCAPS, or single-letter — name-shaped.
-        if not (
-            t.isupper()
-            or (t[0].isupper() and (len(t) == 1 or t[1:].islower()))
-        ):
+        if not (t.isupper() or (t[0].isupper() and (len(t) == 1 or t[1:].islower()))):
             return False
     return True
 
@@ -485,14 +496,10 @@ def _finalize_aggregates(result: WorkbookDiscoveryResult) -> None:
     result.sheets_with_parseable_headers = parseable_count
     result.personal_shaped_sheet_count = personal_count
     result.detected_format_majority = (
-        max(fmt_counts.items(), key=lambda kv: kv[1])[0]
-        if fmt_counts
-        else None
+        max(fmt_counts.items(), key=lambda kv: kv[1])[0] if fmt_counts else None
     )
     result.detected_header_row_majority = (
-        max(header_row_counts.items(), key=lambda kv: kv[1])[0]
-        if header_row_counts
-        else None
+        max(header_row_counts.items(), key=lambda kv: kv[1])[0] if header_row_counts else None
     )
 
 
@@ -582,9 +589,7 @@ def build_draft_manifest(
             layout_type = "display_only"  # conservative default
 
         entity_id = _next_entity_id(
-            "entity"
-            if s.role in ("unknown", "entity_sheet")
-            else s.role.replace("entity_", "")
+            "entity" if s.role in ("unknown", "entity_sheet") else s.role.replace("entity_", "")
         )
 
         spec = EntitySheetSpec(
@@ -594,9 +599,7 @@ def build_draft_manifest(
             display_name=f"{entity_id} ({sheet_name})",
             cash_flow_role=cash_flow_role,  # type: ignore[arg-type]
             row_classification_rules=[],
-            header_row_index=(
-                s.header_candidate.row_index if s.header_candidate else None
-            ),
+            header_row_index=(s.header_candidate.row_index if s.header_candidate else None),
             period_header_format=(
                 s.header_candidate.period_header_format  # type: ignore[arg-type]
                 if s.header_candidate
@@ -670,8 +673,12 @@ def render_aggregate_diagnostics(
         lines.append("draft_manifest:")
         lines.append(f"  - mode:                         {draft.mode}")
         lines.append(f"  - redacted_sheet_count:         {draft.redacted_sheet_count}")
-        lines.append(f"  - family_aggregate_sheets:      {len(draft.manifest.family_aggregate_sheets)}")
-        lines.append(f"  - board_snapshot_sheets:        {len(draft.manifest.board_snapshot_sheets)}")
+        lines.append(
+            f"  - family_aggregate_sheets:      {len(draft.manifest.family_aggregate_sheets)}"
+        )
+        lines.append(
+            f"  - board_snapshot_sheets:        {len(draft.manifest.board_snapshot_sheets)}"
+        )
         lines.append(f"  - entity_sheets:                {len(draft.manifest.entity_sheets)}")
         ds = sum(1 for s in draft.manifest.entity_sheets if s.layout_type == "display_only")
         hq = sum(1 for s in draft.manifest.entity_sheets if s.layout_type == "horizontal_quarter")

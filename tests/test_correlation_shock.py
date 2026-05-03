@@ -76,9 +76,7 @@ def test_discriminator_routes_scale():
 
 def test_discriminator_routes_override():
     adapter = TypeAdapter(CorrelationShock)
-    s = adapter.validate_python(
-        {"type": "override", "matrix": {"a": {"b": 0.5}}}
-    )
+    s = adapter.validate_python({"type": "override", "matrix": {"a": {"b": 0.5}}})
     assert isinstance(s, _OverrideCorrelationShock)
     assert s.matrix == {"a": {"b": 0.5}}
 
@@ -109,16 +107,12 @@ def test_scale_rejects_non_finite_magnitude():
 
 def test_override_rejects_out_of_range_value():
     with pytest.raises(ValidationError, match=r"out of \[-1, 1\]"):
-        _OverrideCorrelationShock.model_validate(
-            {"type": "override", "matrix": {"a": {"b": 1.5}}}
-        )
+        _OverrideCorrelationShock.model_validate({"type": "override", "matrix": {"a": {"b": 1.5}}})
 
 
 def test_override_rejects_diagonal_not_one():
     with pytest.raises(ValidationError, match="diagonal must be 1.0"):
-        _OverrideCorrelationShock.model_validate(
-            {"type": "override", "matrix": {"a": {"a": 0.99}}}
-        )
+        _OverrideCorrelationShock.model_validate({"type": "override", "matrix": {"a": {"a": 0.99}}})
 
 
 def test_override_rejects_asymmetric_supply():
@@ -240,9 +234,7 @@ def test_override_partial_merge_with_auto_mirror():
 
 def test_override_unknown_bucket_fails_with_bucket_name():
     cma = _identity_cma()
-    shock = _OverrideCorrelationShock(
-        type="override", matrix={"a": {"unknown_bucket": 0.5}}
-    )
+    shock = _OverrideCorrelationShock(type="override", matrix={"a": {"unknown_bucket": 0.5}})
     with pytest.raises(ValueError, match="'unknown_bucket' not in CMA"):
         apply_correlation_shock(cma, shock)
 
@@ -253,9 +245,7 @@ def test_override_unknown_bucket_fails_with_bucket_name():
 def test_apply_does_not_mutate_baseline():
     cma = _identity_cma()
     baseline_snapshot = {i: dict(row) for i, row in cma.correlations.items()}
-    shock = _OverrideCorrelationShock(
-        type="override", matrix={"a": {"b": 0.95}}
-    )
+    shock = _OverrideCorrelationShock(type="override", matrix={"a": {"b": 0.95}})
     apply_correlation_shock(cma, shock)
     # Baseline must be byte-identical after apply.
     assert cma.correlations == baseline_snapshot

@@ -143,13 +143,9 @@ class CashFlowLineRecord(BaseModel):
         # with mismatched sign + direction is a classification error
         # the ingestor surfaces immediately.
         if self.direction == "inflow" and self.amount_usd < 0:
-            raise ValueError(
-                f"direction='inflow' requires amount_usd >= 0; got {self.amount_usd}"
-            )
+            raise ValueError(f"direction='inflow' requires amount_usd >= 0; got {self.amount_usd}")
         if self.direction == "outflow" and self.amount_usd > 0:
-            raise ValueError(
-                f"direction='outflow' requires amount_usd <= 0; got {self.amount_usd}"
-            )
+            raise ValueError(f"direction='outflow' requires amount_usd <= 0; got {self.amount_usd}")
         return self
 
 
@@ -305,9 +301,7 @@ class WorkbookManifestConfig(BaseModel):
         # separator (distribution:<domain>:<id>). Reject them here so
         # producer_ids never silently corrupt downstream rollups.
         if ":" in v:
-            raise ValueError(
-                f"workbook_version must be URL-safe (no colons); got {v!r}"
-            )
+            raise ValueError(f"workbook_version must be URL-safe (no colons); got {v!r}")
         return v
 
     @model_validator(mode="after")

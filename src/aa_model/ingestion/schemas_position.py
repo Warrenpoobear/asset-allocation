@@ -56,15 +56,15 @@ _POSITION_NAV_CAVEAT_TEXT: str = (
 )
 
 _LIQUIDITY_BUCKET_LITERAL = Literal[
-    "cash_equivalent",   # money market, T-bills, bank sweep — T+0/T+1
-    "daily_liquid",      # public equity/ETF/IG bond, T+2 settlement
-    "semi_liquid",       # quarterly/annual redemption with notice; HFs
-    "illiquid",          # PE/PC/RE funds, lockup > 1 yr, no redemption
+    "cash_equivalent",  # money market, T-bills, bank sweep — T+0/T+1
+    "daily_liquid",  # public equity/ETF/IG bond, T+2 settlement
+    "semi_liquid",  # quarterly/annual redemption with notice; HFs
+    "illiquid",  # PE/PC/RE funds, lockup > 1 yr, no redemption
     "locked_strategic",  # no near-term exit path; early-vintage PE
-    "re_stabilized",     # income-producing RE, monetize ~12-24 mo
-    "re_development",    # development stage, monetize 2-4 yr
-    "re_land",           # raw land, monetize 3+ yr
-    "opco_strategic",    # operating company strategic hold
+    "re_stabilized",  # income-producing RE, monetize ~12-24 mo
+    "re_development",  # development stage, monetize 2-4 yr
+    "re_land",  # raw land, monetize 3+ yr
+    "opco_strategic",  # operating company strategic hold
 ]
 
 _ASSET_CLASS_LITERAL = Literal[
@@ -122,9 +122,9 @@ _FEE_BASIS_LITERAL = Literal[
 ]
 
 _LAYOUT_TYPE_POSITION_LITERAL = Literal[
-    "flat_position",     # one row per position, no account grouping
+    "flat_position",  # one row per position, no account grouping
     "account_position",  # explicit account header rows above positions
-    "display_only",      # aggregate/summary sheet; not parsed for positions
+    "display_only",  # aggregate/summary sheet; not parsed for positions
 ]
 
 _PHASE12_TIER_LITERAL = Literal[
@@ -134,15 +134,28 @@ _PHASE12_TIER_LITERAL = Literal[
     "locked_strategic",
 ]
 
-_VALID_PHASE15_BUCKETS: frozenset[str] = frozenset({
-    "cash_equivalent", "daily_liquid", "semi_liquid",
-    "illiquid", "locked_strategic", "re_stabilized",
-    "re_development", "re_land", "opco_strategic",
-})
+_VALID_PHASE15_BUCKETS: frozenset[str] = frozenset(
+    {
+        "cash_equivalent",
+        "daily_liquid",
+        "semi_liquid",
+        "illiquid",
+        "locked_strategic",
+        "re_stabilized",
+        "re_development",
+        "re_land",
+        "opco_strategic",
+    }
+)
 
-_VALID_PHASE12_TIERS: frozenset[str] = frozenset({
-    "liquid", "semi_liquid", "illiquid", "locked_strategic",
-})
+_VALID_PHASE12_TIERS: frozenset[str] = frozenset(
+    {
+        "liquid",
+        "semi_liquid",
+        "illiquid",
+        "locked_strategic",
+    }
+)
 
 _SEMI_ILLIQUID_BUCKETS: frozenset[str] = frozenset({"semi_liquid", "illiquid"})
 
@@ -173,7 +186,7 @@ class AccountRecord(BaseModel):
     @classmethod
     def _account_id_valid(cls, v: str) -> str:
         if v.startswith(_SYNTHETIC_PREFIX):
-            rest = v[len(_SYNTHETIC_PREFIX):]
+            rest = v[len(_SYNTHETIC_PREFIX) :]
             if not rest:
                 raise ValueError(
                     f"synthetic account_id must have a non-empty sheet_id "
@@ -239,18 +252,14 @@ class PositionRecord(BaseModel):
     @classmethod
     def _commitment_non_negative(cls, v: float | None) -> float | None:
         if v is not None and v < 0:
-            raise ValueError(
-                f"unfunded_commitment_usd must be >= 0; got {v}"
-            )
+            raise ValueError(f"unfunded_commitment_usd must be >= 0; got {v}")
         return v
 
     @field_validator("time_horizon_quarters")
     @classmethod
     def _horizon_non_negative(cls, v: int | None) -> int | None:
         if v is not None and v < 0:
-            raise ValueError(
-                f"time_horizon_quarters must be >= 0; got {v}"
-            )
+            raise ValueError(f"time_horizon_quarters must be >= 0; got {v}")
         return v
 
 
@@ -286,13 +295,11 @@ class ManagerTermsRecord(BaseModel):
     @classmethod
     def _rate_range(cls, v: float | None) -> float | None:
         if v is not None and not (0.0 <= v <= 1.0):
-            raise ValueError(
-                f"Rate value must be in [0.0, 1.0]; got {v}"
-            )
+            raise ValueError(f"Rate value must be in [0.0, 1.0]; got {v}")
         return v
 
     @model_validator(mode="after")
-    def _confidence_completeness(self) -> "ManagerTermsRecord":
+    def _confidence_completeness(self) -> ManagerTermsRecord:
         if self.confidence == "unknown":
             return self
         missing: list[str] = []
@@ -324,10 +331,10 @@ class AccountSheetSpec(BaseModel):
     sheet_name: str  # local-private only; placeholder in committed scaffold
     layout_type: _LAYOUT_TYPE_POSITION_LITERAL = "flat_position"
     header_row_index: int | None = None  # 0-indexed; None → auto-detect
-    value_column_index: int = 1          # 0-indexed column for market_value_usd
-    name_column_index: int = 0           # 0-indexed column A default
+    value_column_index: int = 1  # 0-indexed column for market_value_usd
+    name_column_index: int = 0  # 0-indexed column A default
     position_column_mappings: dict[str, int] = Field(default_factory=dict)
-    valuation_date: date | None = None   # T2 fallback before manifest as_of_date
+    valuation_date: date | None = None  # T2 fallback before manifest as_of_date
 
     @field_validator("account_id")
     @classmethod
@@ -336,8 +343,7 @@ class AccountSheetSpec(BaseModel):
             return v
         if not _URL_SAFE_RE.match(v):
             raise ValueError(
-                f"account_id must be URL-safe or start with 'synthetic:'; "
-                f"got {v!r}"
+                f"account_id must be URL-safe or start with 'synthetic:'; " f"got {v!r}"
             )
         return v
 
@@ -359,35 +365,29 @@ class PositionManifestConfig(BaseModel):
     @classmethod
     def _url_safe(cls, v: str) -> str:
         if not _URL_SAFE_RE.match(v):
-            raise ValueError(
-                f"Version must be URL-safe (alphanumeric, _, -, .); got {v!r}"
-            )
+            raise ValueError(f"Version must be URL-safe (alphanumeric, _, -, .); got {v!r}")
         return v
 
     @model_validator(mode="after")
-    def _unique_account_ids(self) -> "PositionManifestConfig":
+    def _unique_account_ids(self) -> PositionManifestConfig:
         seen: set[str] = set()
         for spec in self.accounts:
             if spec.account_id in seen:
-                raise ValueError(
-                    f"Duplicate account_id in manifest: {spec.account_id!r}"
-                )
+                raise ValueError(f"Duplicate account_id in manifest: {spec.account_id!r}")
             seen.add(spec.account_id)
         return self
 
     @model_validator(mode="after")
-    def _unique_manager_ids(self) -> "PositionManifestConfig":
+    def _unique_manager_ids(self) -> PositionManifestConfig:
         seen: set[str] = set()
         for terms in self.manager_terms:
             if terms.manager_id in seen:
-                raise ValueError(
-                    f"Duplicate manager_id in manifest: {terms.manager_id!r}"
-                )
+                raise ValueError(f"Duplicate manager_id in manifest: {terms.manager_id!r}")
             seen.add(terms.manager_id)
         return self
 
     @model_validator(mode="after")
-    def _valid_liquidity_overrides(self) -> "PositionManifestConfig":
+    def _valid_liquidity_overrides(self) -> PositionManifestConfig:
         if self.liquidity_tier_overrides is None:
             return self
         for bucket, tier in self.liquidity_tier_overrides.items():

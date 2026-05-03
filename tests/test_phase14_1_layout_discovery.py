@@ -26,7 +26,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
 from aa_model.ingestion.schemas import (
     EntitySheetSpec,
     RowClassificationRule,
@@ -56,23 +55,26 @@ def test_row4_qyyyy_fixture_parses(tmp_path):
     """Phase 14.1 #1: synthetic v7-shaped fixture (header on row 4,
     format q_yyyy) parses correctly under the new knobs."""
     wb_path = tmp_path / "synthetic_v7.xlsx"
-    _build_workbook(wb_path, sheets={
-        # Row 1: workbook title; Row 2: blank; Row 3: year banner;
-        # Row 4: canonical "Q1 2025"-style headers; Row 5+: data.
-        "EntityA": [
-            ["Cash Flow Forecast", None, None, None, None],
-            [None, None, None, None, None],
-            [None, "FY2025", None, None, None],
-            ["Item",      "Q1 2025", "Q2 2025", "Q3 2025", "Q4 2025"],
-            ["Rent",      100_000,   100_000,   100_000,   100_000],
-            ["Tax",       -10_000,   -10_000,   -10_000,   -10_000],
-        ],
-    })
+    _build_workbook(
+        wb_path,
+        sheets={
+            # Row 1: workbook title; Row 2: blank; Row 3: year banner;
+            # Row 4: canonical "Q1 2025"-style headers; Row 5+: data.
+            "EntityA": [
+                ["Cash Flow Forecast", None, None, None, None],
+                [None, None, None, None, None],
+                [None, "FY2025", None, None, None],
+                ["Item", "Q1 2025", "Q2 2025", "Q3 2025", "Q4 2025"],
+                ["Rent", 100_000, 100_000, 100_000, 100_000],
+                ["Tax", -10_000, -10_000, -10_000, -10_000],
+            ],
+        },
+    )
     manifest = WorkbookManifestConfig(
         workbook_version="v7_synthetic",
         expected_workbook_filename="synthetic_v7.xlsx",
-        period_header_format="q_yyyy",          # manifest-level
-        default_header_row_index=4,              # manifest-level
+        period_header_format="q_yyyy",  # manifest-level
+        default_header_row_index=4,  # manifest-level
         entity_sheets=[
             EntitySheetSpec(
                 sheet_name="EntityA",
@@ -118,20 +120,23 @@ def test_per_sheet_header_row_index_override(tmp_path):
     """Phase 14.1 #2: a sheet-level header_row_index beats the
     manifest default."""
     wb_path = tmp_path / "synthetic.xlsx"
-    _build_workbook(wb_path, sheets={
-        # Sheet A: row-1 header (matches manifest default).
-        "EntityA": [
-            ["Item",  "2026Q1", "2026Q2"],
-            ["Rent",  100_000,  100_000],
-        ],
-        # Sheet B: row-3 header (overrides manifest default).
-        "EntityB": [
-            ["Workbook title", None, None],
-            [None, None, None],
-            ["Item",  "2026Q1", "2026Q2"],
-            ["Rent",  200_000,  200_000],
-        ],
-    })
+    _build_workbook(
+        wb_path,
+        sheets={
+            # Sheet A: row-1 header (matches manifest default).
+            "EntityA": [
+                ["Item", "2026Q1", "2026Q2"],
+                ["Rent", 100_000, 100_000],
+            ],
+            # Sheet B: row-3 header (overrides manifest default).
+            "EntityB": [
+                ["Workbook title", None, None],
+                [None, None, None],
+                ["Item", "2026Q1", "2026Q2"],
+                ["Rent", 200_000, 200_000],
+            ],
+        },
+    )
     manifest = WorkbookManifestConfig(
         workbook_version="v1",
         expected_workbook_filename="synthetic.xlsx",
@@ -141,12 +146,16 @@ def test_per_sheet_header_row_index_override(tmp_path):
                 sheet_name="EntityA",
                 entity_id="entity_a",
                 entity_type="operating_llc",
-                display_name="A", cash_flow_role="operating",
+                display_name="A",
+                cash_flow_role="operating",
                 row_classification_rules=[
                     RowClassificationRule(
                         row_label_pattern="rent",
-                        direction="inflow", category="rent", domain="real_estate",
-                        distributable_candidate=True, recurrence_type="recurring",
+                        direction="inflow",
+                        category="rent",
+                        domain="real_estate",
+                        distributable_candidate=True,
+                        recurrence_type="recurring",
                         certainty="contractual",
                     ),
                 ],
@@ -155,14 +164,18 @@ def test_per_sheet_header_row_index_override(tmp_path):
                 sheet_name="EntityB",
                 entity_id="entity_b",
                 entity_type="operating_llc",
-                display_name="B", cash_flow_role="operating",
+                display_name="B",
+                cash_flow_role="operating",
                 # Per-sheet override: header is at row 3.
                 header_row_index=3,
                 row_classification_rules=[
                     RowClassificationRule(
                         row_label_pattern="rent",
-                        direction="inflow", category="rent", domain="real_estate",
-                        distributable_candidate=True, recurrence_type="recurring",
+                        direction="inflow",
+                        category="rent",
+                        domain="real_estate",
+                        distributable_candidate=True,
+                        recurrence_type="recurring",
                         certainty="contractual",
                     ),
                 ],
@@ -188,28 +201,36 @@ def test_per_sheet_period_header_format_override(tmp_path):
     """Phase 14.1 #3: a sheet-level period_header_format beats the
     manifest default."""
     wb_path = tmp_path / "synthetic.xlsx"
-    _build_workbook(wb_path, sheets={
-        "EntityA": [
-            # Format: q_yyyy ("Q1 2026") — different from manifest's yyyy_q.
-            ["Item", "Q1 2026", "Q2 2026"],
-            ["Rent", 100_000,   100_000],
-        ],
-    })
+    _build_workbook(
+        wb_path,
+        sheets={
+            "EntityA": [
+                # Format: q_yyyy ("Q1 2026") — different from manifest's yyyy_q.
+                ["Item", "Q1 2026", "Q2 2026"],
+                ["Rent", 100_000, 100_000],
+            ],
+        },
+    )
     manifest = WorkbookManifestConfig(
         workbook_version="v1",
         expected_workbook_filename="synthetic.xlsx",
-        period_header_format="yyyy_q",     # manifest default — wrong for this sheet
+        period_header_format="yyyy_q",  # manifest default — wrong for this sheet
         entity_sheets=[
             EntitySheetSpec(
-                sheet_name="EntityA", entity_id="entity_a",
-                entity_type="operating_llc", display_name="A",
+                sheet_name="EntityA",
+                entity_id="entity_a",
+                entity_type="operating_llc",
+                display_name="A",
                 cash_flow_role="operating",
-                period_header_format="q_yyyy",   # per-sheet override
+                period_header_format="q_yyyy",  # per-sheet override
                 row_classification_rules=[
                     RowClassificationRule(
                         row_label_pattern="rent",
-                        direction="inflow", category="rent", domain="real_estate",
-                        distributable_candidate=True, recurrence_type="recurring",
+                        direction="inflow",
+                        category="rent",
+                        domain="real_estate",
+                        distributable_candidate=True,
+                        recurrence_type="recurring",
                         certainty="contractual",
                     ),
                 ],
@@ -228,39 +249,49 @@ def test_display_only_skips_data_extraction(tmp_path):
     """Phase 14.1 #4: declared display_only sheet emits an EntityRecord
     but no CashFlowLineRecord rows; surfaced in diagnostics."""
     wb_path = tmp_path / "synthetic.xlsx"
-    _build_workbook(wb_path, sheets={
-        "DataSheet": [
-            ["Item",  "2026Q1", "2026Q2"],
-            ["Rent",  100_000,  100_000],
-        ],
-        "DisplaySheet": [
-            ["Header text only", None, None],
-            ["Some structure",   None, None],
-            ["No quarter cols",  None, None],
-        ],
-    })
+    _build_workbook(
+        wb_path,
+        sheets={
+            "DataSheet": [
+                ["Item", "2026Q1", "2026Q2"],
+                ["Rent", 100_000, 100_000],
+            ],
+            "DisplaySheet": [
+                ["Header text only", None, None],
+                ["Some structure", None, None],
+                ["No quarter cols", None, None],
+            ],
+        },
+    )
     manifest = WorkbookManifestConfig(
         workbook_version="v1",
         expected_workbook_filename="synthetic.xlsx",
         entity_sheets=[
             EntitySheetSpec(
-                sheet_name="DataSheet", entity_id="data_entity",
-                entity_type="operating_llc", display_name="Data",
+                sheet_name="DataSheet",
+                entity_id="data_entity",
+                entity_type="operating_llc",
+                display_name="Data",
                 cash_flow_role="operating",
                 row_classification_rules=[
                     RowClassificationRule(
                         row_label_pattern="rent",
-                        direction="inflow", category="rent", domain="real_estate",
-                        distributable_candidate=True, recurrence_type="recurring",
+                        direction="inflow",
+                        category="rent",
+                        domain="real_estate",
+                        distributable_candidate=True,
+                        recurrence_type="recurring",
                         certainty="contractual",
                     ),
                 ],
             ),
             EntitySheetSpec(
-                sheet_name="DisplaySheet", entity_id="display_entity",
-                entity_type="family_aggregate", display_name="Display",
+                sheet_name="DisplaySheet",
+                entity_id="display_entity",
+                entity_type="family_aggregate",
+                display_name="Display",
                 cash_flow_role="operating",
-                layout_type="display_only",     # NEW Phase 14.1
+                layout_type="display_only",  # NEW Phase 14.1
             ),
         ],
     )
@@ -272,8 +303,7 @@ def test_display_only_skips_data_extraction(tmp_path):
     assert {line.entity_id for line in result.cash_flow_lines} == {"data_entity"}
     # Display sheet noted in diagnostics.
     assert any(
-        "display_only:DisplaySheet" in entry
-        for entry in result.diagnostics.missing_optional_sheets
+        "display_only:DisplaySheet" in entry for entry in result.diagnostics.missing_optional_sheets
     )
 
 
@@ -286,14 +316,17 @@ def test_default_behavior_byte_stable_vs_phase14(tmp_path):
     This is the regression anchor that pins backward compatibility.
     """
     wb_path = tmp_path / "synthetic.xlsx"
-    _build_workbook(wb_path, sheets={
-        # Same fixture shape as Phase 14 test #5.
-        "EntityA": [
-            ["Item", "2026Q1", "2026Q2", "2026Q3", "2026Q4"],
-            ["Rent collected", 100_000, 100_000, 100_000, 100_000],
-            ["Tax payment",    -10_000, -10_000, -10_000, -10_000],
-        ],
-    })
+    _build_workbook(
+        wb_path,
+        sheets={
+            # Same fixture shape as Phase 14 test #5.
+            "EntityA": [
+                ["Item", "2026Q1", "2026Q2", "2026Q3", "2026Q4"],
+                ["Rent collected", 100_000, 100_000, 100_000, 100_000],
+                ["Tax payment", -10_000, -10_000, -10_000, -10_000],
+            ],
+        },
+    )
     # Manifest with no Phase 14.1 overrides: header_row_index defaults
     # to 1 via manifest.default_header_row_index; period_header_format
     # defaults to "yyyy_q"; layout_type defaults to "horizontal_quarter".
@@ -302,22 +335,29 @@ def test_default_behavior_byte_stable_vs_phase14(tmp_path):
         expected_workbook_filename="synthetic.xlsx",
         entity_sheets=[
             EntitySheetSpec(
-                sheet_name="EntityA", entity_id="entity_a",
-                entity_type="operating_llc", display_name="Entity A",
+                sheet_name="EntityA",
+                entity_id="entity_a",
+                entity_type="operating_llc",
+                display_name="Entity A",
                 cash_flow_role="operating",
                 # Note: no header_row_index, period_header_format, or
                 # layout_type set. All defaults.
                 row_classification_rules=[
                     RowClassificationRule(
                         row_label_pattern="rent collected",
-                        direction="inflow", category="rent", domain="real_estate",
-                        distributable_candidate=True, recurrence_type="recurring",
+                        direction="inflow",
+                        category="rent",
+                        domain="real_estate",
+                        distributable_candidate=True,
+                        recurrence_type="recurring",
                         certainty="contractual",
                     ),
                     RowClassificationRule(
                         row_label_pattern="tax payment",
-                        direction="outflow", category="tax",
-                        recurrence_type="recurring", certainty="contractual",
+                        direction="outflow",
+                        category="tax",
+                        recurrence_type="recurring",
+                        certainty="contractual",
                     ),
                 ],
             ),
@@ -327,7 +367,10 @@ def test_default_behavior_byte_stable_vs_phase14(tmp_path):
     # Same output as Phase 14: 8 lines (2 row labels × 4 quarters).
     assert len(result.cash_flow_lines) == 8
     assert {line.quarter for line in result.cash_flow_lines} == {
-        "2026Q1", "2026Q2", "2026Q3", "2026Q4"
+        "2026Q1",
+        "2026Q2",
+        "2026Q3",
+        "2026Q4",
     }
     # Verify defaults flowed through correctly: spec values are None;
     # parser used manifest defaults.

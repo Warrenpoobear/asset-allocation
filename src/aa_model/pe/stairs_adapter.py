@@ -82,9 +82,7 @@ class STAIRSAdapter(PEAdapter):
                 "STAIRSAdapter requires cma.expected_returns_annual to include "
                 "'public_equity'; missing in this CMA"
             )
-        expected_quarterly_pu = float(
-            cma.expected_returns_annual.loc["public_equity"]
-        ) / 4.0
+        expected_quarterly_pu = float(cma.expected_returns_annual.loc["public_equity"]) / 4.0
 
         # Project every fund over its full lifetime (TA's behavior), then
         # filter to horizon at the end. Per-fund full-lifetime projection

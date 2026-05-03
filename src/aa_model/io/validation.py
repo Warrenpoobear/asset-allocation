@@ -125,7 +125,8 @@ def validate_study_config(cfg: StudyConfig) -> None:
                 f"missing: {sorted(missing_liq)}"
             )
         wrong_pe_tags = [
-            b for b in stub_buckets
+            b
+            for b in stub_buckets
             if b.startswith("pe_") and cfg.cma.liquidity.get(b) != "illiquid"
         ]
         if wrong_pe_tags:
@@ -135,7 +136,8 @@ def validate_study_config(cfg: StudyConfig) -> None:
                 f"{[(b, cfg.cma.liquidity[b]) for b in sorted(wrong_pe_tags)]}"
             )
         liquid_set = {
-            b for b, tag in cfg.cma.liquidity.items()
+            b
+            for b, tag in cfg.cma.liquidity.items()
             if tag in ("liquid", "semi_liquid") and b in stub_buckets
         }
         if not liquid_set:
@@ -143,9 +145,7 @@ def validate_study_config(cfg: StudyConfig) -> None:
                 "L8 overlay requires at least one allocation bucket tagged "
                 "'liquid' or 'semi_liquid'; cma.liquidity has none"
             )
-        liquid_policy_weight_sum = sum(
-            cfg.allocation.stub_weights.get(b, 0.0) for b in liquid_set
-        )
+        liquid_policy_weight_sum = sum(cfg.allocation.stub_weights.get(b, 0.0) for b in liquid_set)
         if liquid_policy_weight_sum <= 0.0:
             raise ValueError(
                 "L8 overlay requires aggregate policy weight across the "

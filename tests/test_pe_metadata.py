@@ -120,9 +120,7 @@ def test_strategy_sleeve_match_passes():
 
 
 def test_strategy_sleeve_mismatch_fails_with_both_values():
-    with pytest.raises(
-        ValidationError, match=r"strategy='venture' requires sleeve='pe_venture'"
-    ):
+    with pytest.raises(ValidationError, match=r"strategy='venture' requires sleeve='pe_venture'"):
         _fund("F1", strategy="venture", sleeve="pe_buyout")
 
 
@@ -145,9 +143,7 @@ def test_pe_pacing_duplicate_name_fails():
     """Locked rule — ledger source remains pacing:<fund_name>, so two
     funds with the same name create ambiguous ledger sources.
     """
-    with pytest.raises(
-        ValidationError, match="name must be globally unique"
-    ):
+    with pytest.raises(ValidationError, match="name must be globally unique"):
         PEPacingConfig(
             ta_defaults=_ta_defaults(),
             funds=[_fund("dup"), _fund("dup")],
@@ -155,9 +151,7 @@ def test_pe_pacing_duplicate_name_fails():
 
 
 def test_pe_pacing_duplicate_fund_id_fails():
-    with pytest.raises(
-        ValidationError, match="fund_id must be globally unique when set"
-    ):
+    with pytest.raises(ValidationError, match="fund_id must be globally unique when set"):
         PEPacingConfig(
             ta_defaults=_ta_defaults(),
             funds=[
@@ -233,9 +227,7 @@ def test_status_exited_fund_excluded_from_projection(repo_root: Path):
         df = result.ledger
         # No PE flow rows should reference the exited fund.
         ex = df[df["source"] == "pacing:ExitedFund_2026Q1"]
-        assert ex.empty, (
-            f"exited fund leaked into the ledger: {len(ex)} rows"
-        )
+        assert ex.empty, f"exited fund leaked into the ledger: {len(ex)} rows"
     finally:
         pe_path.unlink(missing_ok=True)
         base_path.unlink(missing_ok=True)

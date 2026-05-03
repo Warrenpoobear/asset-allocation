@@ -48,8 +48,6 @@ import datetime
 from pathlib import Path
 
 import pytest
-from pydantic import ValidationError
-
 from aa_model.ingestion.liquidity_mapping import (
     build_effective_mapping,
     resolve_phase12_tier,
@@ -61,7 +59,7 @@ from aa_model.ingestion.schemas_position import (
     PositionManifestConfig,
     PositionRecord,
 )
-
+from pydantic import ValidationError
 
 # ---- synthetic workbook builder --------------------------------------------
 
@@ -123,9 +121,15 @@ def test_position_record_negative_nav_raises():
 def test_position_record_valid_and_liquidity_enum():
     """Phase 15 #2: valid PositionRecord accepted; all 9 liquidity_bucket values."""
     buckets = [
-        "cash_equivalent", "daily_liquid", "semi_liquid", "illiquid",
-        "locked_strategic", "re_stabilized", "re_development",
-        "re_land", "opco_strategic",
+        "cash_equivalent",
+        "daily_liquid",
+        "semi_liquid",
+        "illiquid",
+        "locked_strategic",
+        "re_stabilized",
+        "re_development",
+        "re_land",
+        "opco_strategic",
     ]
     for i, bucket in enumerate(buckets):
         pos = PositionRecord(
@@ -512,12 +516,11 @@ def test_terms_status_complete_and_unknown(tmp_path: Path):
 
 def test_discovery_privacy_safe_no_sheet_names(tmp_path: Path):
     """Phase 15 #14: privacy_safe draft manifest does not emit raw sheet names."""
-    from openpyxl import Workbook
-
     from aa_model.ingestion.discovery_position import (
         build_draft_position_manifest,
         discover_investment_summary,
     )
+    from openpyxl import Workbook
 
     # Build a synthetic workbook with a recognizable sheet name.
     wb = Workbook()

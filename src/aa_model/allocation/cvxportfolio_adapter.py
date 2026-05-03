@@ -133,9 +133,7 @@ class CvxportfolioAllocator(AllocationAdapter):
                 "policy_loss_lambda_norm_used": self._policy_loss_lambda_norm,
                 "ratio_used_over_suggested_median": None,
             }
-        v_arr = np.array(
-            [r["v_total_usd"] for r in self._calibration_history], dtype=float
-        )
+        v_arr = np.array([r["v_total_usd"] for r in self._calibration_history], dtype=float)
         sug_arr = np.array(
             [r["suggested_policy_loss_lambda_norm"] for r in self._calibration_history],
             dtype=float,
@@ -151,9 +149,7 @@ class CvxportfolioAllocator(AllocationAdapter):
             "suggested_policy_loss_lambda_norm_median": float(np.median(sug_arr)),
             "policy_loss_lambda_norm_used": self._policy_loss_lambda_norm,
             "ratio_used_over_suggested_median": (
-                float(np.median(np.array(ratio_vals, dtype=float)))
-                if ratio_vals
-                else None
+                float(np.median(np.array(ratio_vals, dtype=float))) if ratio_vals else None
             ),
         }
 

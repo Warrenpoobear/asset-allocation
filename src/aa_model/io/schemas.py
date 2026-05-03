@@ -202,8 +202,7 @@ class CMAConfig(BaseModel):
     # other bucket whose value never enters spending decisions
     # short of an explicit liquidity event.
     liquidity: (
-        dict[str, Literal["liquid", "semi_liquid", "illiquid", "locked_strategic"]]
-        | None
+        dict[str, Literal["liquid", "semi_liquid", "illiquid", "locked_strategic"]] | None
     ) = None
     # Phase 12 / L19: optional per-bucket flag. Required by
     # StudyConfig cross-validator only when
@@ -224,9 +223,7 @@ class CMAConfig(BaseModel):
         for bucket, x in v.items():
             xf = float(x)
             if not math.isfinite(xf):
-                raise ValueError(
-                    f"expected_returns_annual[{bucket!r}] = {x!r} is not finite"
-                )
+                raise ValueError(f"expected_returns_annual[{bucket!r}] = {x!r} is not finite")
             if abs(xf) >= _EXPECTED_RETURN_BOUND:
                 raise ValueError(
                     f"expected_returns_annual[{bucket!r}] = {xf} is out of bounds; "
@@ -250,9 +247,7 @@ class CMAConfig(BaseModel):
 
     @field_validator("correlations")
     @classmethod
-    def _corr_per_cell(
-        cls, v: dict[str, dict[str, float]]
-    ) -> dict[str, dict[str, float]]:
+    def _corr_per_cell(cls, v: dict[str, dict[str, float]]) -> dict[str, dict[str, float]]:
         if not v:
             raise ValueError("correlations must be non-empty")
         outer_buckets = set(v.keys())
@@ -261,19 +256,14 @@ class CMAConfig(BaseModel):
                 missing = sorted(outer_buckets - set(row.keys()))
                 extra = sorted(set(row.keys()) - outer_buckets)
                 raise ValueError(
-                    f"correlations[{i!r}] keys mismatch — "
-                    f"missing: {missing}, extra: {extra}"
+                    f"correlations[{i!r}] keys mismatch — " f"missing: {missing}, extra: {extra}"
                 )
             for j, x in row.items():
                 xf = float(x)
                 if not math.isfinite(xf):
-                    raise ValueError(
-                        f"correlations[{i!r}][{j!r}] = {x!r} is not finite"
-                    )
+                    raise ValueError(f"correlations[{i!r}][{j!r}] = {x!r} is not finite")
                 if abs(xf) > _CORR_BOUND + _NUMERIC_TOLERANCE:
-                    raise ValueError(
-                        f"correlations[{i!r}][{j!r}] = {xf} out of [-1, 1]"
-                    )
+                    raise ValueError(f"correlations[{i!r}][{j!r}] = {xf} out of [-1, 1]")
                 if i == j and abs(xf - 1.0) > _NUMERIC_TOLERANCE:
                     raise ValueError(
                         f"correlations[{i!r}][{i!r}] = {xf}; diagonal must be 1.0 "
@@ -307,22 +297,16 @@ class CMAConfig(BaseModel):
         if self.liquidity is not None and set(self.liquidity.keys()) != er_buckets:
             missing = sorted(er_buckets - set(self.liquidity.keys()))
             extra = sorted(set(self.liquidity.keys()) - er_buckets)
-            raise ValueError(
-                f"liquidity bucket set mismatch — missing: {missing}, extra: {extra}"
-            )
+            raise ValueError(f"liquidity bucket set mismatch — missing: {missing}, extra: {extra}")
 
         # Phase 12 / L19: income_producing must cover every bucket
         # when present (no silent default-False — reviewer
         # tightening 2 / scope discipline).
-        if (
-            self.income_producing is not None
-            and set(self.income_producing.keys()) != er_buckets
-        ):
+        if self.income_producing is not None and set(self.income_producing.keys()) != er_buckets:
             missing = sorted(er_buckets - set(self.income_producing.keys()))
             extra = sorted(set(self.income_producing.keys()) - er_buckets)
             raise ValueError(
-                f"income_producing bucket set mismatch — "
-                f"missing: {missing}, extra: {extra}"
+                f"income_producing bucket set mismatch — " f"missing: {missing}, extra: {extra}"
             )
 
         # PSD check on the assembled covariance matrix Σ = diag(vol)·corr·diag(vol).
@@ -396,9 +380,7 @@ class _OverrideCorrelationShock(BaseModel):
 
     @field_validator("matrix")
     @classmethod
-    def _matrix_well_formed(
-        cls, v: dict[str, dict[str, float]]
-    ) -> dict[str, dict[str, float]]:
+    def _matrix_well_formed(cls, v: dict[str, dict[str, float]]) -> dict[str, dict[str, float]]:
         if not v:
             raise ValueError("correlation_shock.override.matrix must be non-empty")
         for i, row in v.items():
@@ -406,13 +388,11 @@ class _OverrideCorrelationShock(BaseModel):
                 xf = float(x)
                 if not math.isfinite(xf):
                     raise ValueError(
-                        f"correlation_shock.override.matrix[{i!r}][{j!r}] = "
-                        f"{x!r} is not finite"
+                        f"correlation_shock.override.matrix[{i!r}][{j!r}] = " f"{x!r} is not finite"
                     )
                 if abs(xf) > _CORR_BOUND + _NUMERIC_TOLERANCE:
                     raise ValueError(
-                        f"correlation_shock.override.matrix[{i!r}][{j!r}] = "
-                        f"{xf} out of [-1, 1]"
+                        f"correlation_shock.override.matrix[{i!r}][{j!r}] = " f"{xf} out of [-1, 1]"
                     )
                 if i == j and abs(xf - 1.0) > _NUMERIC_TOLERANCE:
                     raise ValueError(
@@ -564,9 +544,7 @@ class GuardrailConfig(BaseModel):
         if v is None:
             return v
         if not math.isfinite(v):
-            raise ValueError(
-                f"bootstrap_distributable_income_usd must be finite; got {v!r}"
-            )
+            raise ValueError(f"bootstrap_distributable_income_usd must be finite; got {v!r}")
         return v
 
     @field_validator("spending_base_weights")
@@ -588,13 +566,9 @@ class GuardrailConfig(BaseModel):
         for bucket, w in v.items():
             wf = float(w)
             if not math.isfinite(wf):
-                raise ValueError(
-                    f"spending_base_weights[{bucket!r}] = {w!r} is not finite"
-                )
+                raise ValueError(f"spending_base_weights[{bucket!r}] = {w!r} is not finite")
             if wf < 0.0:
-                raise ValueError(
-                    f"spending_base_weights[{bucket!r}] = {wf} < 0"
-                )
+                raise ValueError(f"spending_base_weights[{bucket!r}] = {wf} < 0")
             if wf > 0.0:
                 any_positive = True
         if not any_positive:
@@ -628,9 +602,7 @@ class GuardrailConfig(BaseModel):
                 f"spending_base='custom_policy'; got {self.spending_base!r}"
             )
         if self.spending_base == "custom_policy" and self.spending_base_weights is None:
-            raise ValueError(
-                "spending_base='custom_policy' requires spending_base_weights"
-            )
+            raise ValueError("spending_base='custom_policy' requires spending_base_weights")
         return self
 
     @model_validator(mode="after")
@@ -643,19 +615,13 @@ class GuardrailConfig(BaseModel):
         # any other base is a config mistake — fail loud (matches the
         # weights-only-with-custom_policy discipline above).
         is_distributable_income = self.spending_base == "distributable_income"
-        if (
-            self.distribution_window_quarters is not None
-            and not is_distributable_income
-        ):
+        if self.distribution_window_quarters is not None and not is_distributable_income:
             raise ValueError(
                 "distribution_window_quarters is only meaningful when "
                 f"spending_base='distributable_income'; got "
                 f"{self.spending_base!r}"
             )
-        if (
-            self.bootstrap_distributable_income_usd is not None
-            and not is_distributable_income
-        ):
+        if self.bootstrap_distributable_income_usd is not None and not is_distributable_income:
             raise ValueError(
                 "bootstrap_distributable_income_usd is only meaningful when "
                 f"spending_base='distributable_income'; got "
@@ -669,8 +635,7 @@ class GuardrailConfig(BaseModel):
                 missing.append("bootstrap_distributable_income_usd")
             if missing:
                 raise ValueError(
-                    "spending_base='distributable_income' requires: "
-                    + ", ".join(missing)
+                    "spending_base='distributable_income' requires: " + ", ".join(missing)
                 )
         return self
 
@@ -760,15 +725,18 @@ class FundConfig(BaseModel):
     # ---- Phase 9 additions, all optional except status ----
     manager: str | None = None
     fund_id: str | None = None
-    strategy: Literal[
-        "buyout",
-        "venture",
-        "growth",
-        "credit",
-        "real_estate",
-        "infra",
-        "secondary",
-    ] | None = None
+    strategy: (
+        Literal[
+            "buyout",
+            "venture",
+            "growth",
+            "credit",
+            "real_estate",
+            "infra",
+            "secondary",
+        ]
+        | None
+    ) = None
     fee_model: _FeeModelConfig | None = None
     status: Literal["active", "committed", "exited", "planned"] = "active"
 
@@ -877,8 +845,7 @@ class PEPacingConfig(BaseModel):
         if len(names) != len(set(names)):
             dups = sorted({n for n in names if names.count(n) > 1})
             raise ValueError(
-                f"pe_pacing.funds: name must be globally unique; "
-                f"duplicates: {dups}"
+                f"pe_pacing.funds: name must be globally unique; " f"duplicates: {dups}"
             )
 
         # Phase 9: globally-unique fund_id when set on any fund.
@@ -886,8 +853,7 @@ class PEPacingConfig(BaseModel):
         if len(ids) != len(set(ids)):
             dups = sorted({i for i in ids if ids.count(i) > 1})
             raise ValueError(
-                f"pe_pacing.funds: fund_id must be globally unique when set; "
-                f"duplicates: {dups}"
+                f"pe_pacing.funds: fund_id must be globally unique when set; " f"duplicates: {dups}"
             )
 
         # Phase 9: (manager, name) uniqueness when manager is set —
@@ -995,8 +961,7 @@ class DistributionEntryConfig(BaseModel):
         # source string.
         if ":" in v:
             raise ValueError(
-                f"colons are reserved for the source convention separator; "
-                f"got {v!r}"
+                f"colons are reserved for the source convention separator; " f"got {v!r}"
             )
         return v
 
@@ -1017,10 +982,7 @@ class DistributionEntryConfig(BaseModel):
         # graduates from "development" to "real_estate" in the spec.
         # Recurring agricultural / extraction land leases are a Phase
         # 13.x concern — not in scope for this initial schema.
-        if (
-            self.domain in ("development", "land")
-            and self.recurrence_type == "recurring"
-        ):
+        if self.domain in ("development", "land") and self.recurrence_type == "recurring":
             raise ValueError(
                 f"domain={self.domain!r} cannot have "
                 f"recurrence_type='recurring'; only one_time monetization "
@@ -1071,8 +1033,8 @@ class WorkbookIngestionConfig(BaseModel):
     """
 
     model_config = _STRICT
-    workbook_path: str = Field(min_length=1)        # absolute or
-                                                     # repo-relative path
+    workbook_path: str = Field(min_length=1)  # absolute or
+    # repo-relative path
     manifest_version: str = Field(default="1", min_length=1)
     # The full WorkbookManifestConfig — typed as Any here because
     # importing the ingestion-side schema would create an inversion
@@ -1084,9 +1046,7 @@ class WorkbookIngestionConfig(BaseModel):
     @classmethod
     def _manifest_version_url_safe(cls, v: str) -> str:
         if ":" in v:
-            raise ValueError(
-                f"manifest_version must be URL-safe (no colons); got {v!r}"
-            )
+            raise ValueError(f"manifest_version must be URL-safe (no colons); got {v!r}")
         return v
 
 
@@ -1116,9 +1076,7 @@ class PositionIngestionConfig(BaseModel):
     @classmethod
     def _manifest_version_url_safe(cls, v: str) -> str:
         if ":" in v:
-            raise ValueError(
-                f"manifest_version must be URL-safe (no colons); got {v!r}"
-            )
+            raise ValueError(f"manifest_version must be URL-safe (no colons); got {v!r}")
         return v
 
 

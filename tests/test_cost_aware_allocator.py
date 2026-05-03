@@ -69,9 +69,7 @@ def _params(cfg: PublicAllocationConfig) -> AllocationParams:
 
 
 def _empty_ledger(start_q: pd.Period, buckets: list[str]) -> QuarterlyLedger:
-    return QuarterlyLedger(
-        "test", initial_nav={b: 0.0 for b in buckets}, start_quarter=start_q
-    )
+    return QuarterlyLedger("test", initial_nav={b: 0.0 for b in buckets}, start_quarter=start_q)
 
 
 # ---- 1. Zero-cost parity -----------------------------------------------------
@@ -108,9 +106,7 @@ def test_zero_cost_parity_holds_at_realistic_nav_and_low_lambda():
         target = alloc.target_at(L, params, _q("2026Q2"), current, CostModel(0.0))
         expected = pd.Series({"a": 0.5, "b": 0.5})
         diff = (target - expected).abs().max()
-        assert diff < 1e-12, (
-            f"zero-cost parity broken at λ_norm={lam}: target={target.to_dict()}"
-        )
+        assert diff < 1e-12, f"zero-cost parity broken at λ_norm={lam}: target={target.to_dict()}"
 
 
 def test_zero_cost_parity_cvxportfolio_returns_policy():
@@ -168,7 +164,9 @@ def test_closed_form_partial_trade_2bucket():
     # Solver tolerance + canonicalization: should be tighter than 1e-9 in $.
     # In weight-space at V = 1e6, 1e-9 USD ≈ 1e-15 in weight; relax to 1e-9
     # in weight to leave headroom for solver tolerance.
-    assert diff < 1e-9, f"closed-form mismatch: target={target.to_dict()}, expected={expected.to_dict()}"
+    assert (
+        diff < 1e-9
+    ), f"closed-form mismatch: target={target.to_dict()}, expected={expected.to_dict()}"
 
 
 def test_closed_form_no_trade_when_threshold_dominates():
@@ -227,9 +225,7 @@ def test_bucket_order_symmetry():
 
 def test_total_turnover_monotonic_in_bps_n_bucket():
     """Total turnover ‖trade_dollars‖₁ is non-increasing in bps."""
-    cfg = _make_cfg(
-        {"a": 0.4, "b": 0.4, "c": 0.2}, policy_loss_lambda_norm=1e4
-    )
+    cfg = _make_cfg({"a": 0.4, "b": 0.4, "c": 0.2}, policy_loss_lambda_norm=1e4)
     alloc = CvxportfolioAllocator(cfg)
     alloc.fit(pd.DataFrame(), CMA(), Constraints())
     params = _params(cfg)
@@ -268,9 +264,9 @@ def test_elementwise_monotonic_2bucket():
         alloc.target_at(L, params, _q("2026Q2"), current, CostModel(500.0)) * V - current
     ).abs()
     for b in current.index:
-        assert abs_trades_high[b] <= abs_trades_low[b] + 1e-6, (
-            f"|trade_{b}| not monotonic: low={abs_trades_low[b]}, high={abs_trades_high[b]}"
-        )
+        assert (
+            abs_trades_high[b] <= abs_trades_low[b] + 1e-6
+        ), f"|trade_{b}| not monotonic: low={abs_trades_low[b]}, high={abs_trades_high[b]}"
 
 
 # ---- 5. Path-blindness -------------------------------------------------------
@@ -329,16 +325,14 @@ def test_spending_decision_independent_of_allocator_engine():
         floor_usd=0.0,
         ceiling_usd=1_000_000.0,
     )
-    sp_params = SpendingParams(
-        config=spend_cfg, start_quarter=_q("2026Q1"), num_quarters=4
-    )
+    sp_params = SpendingParams(config=spend_cfg, start_quarter=_q("2026Q1"), num_quarters=4)
 
     # Build a ledger that reflects "after some quarters have settled" so
     # path-dependent rules (Smoothing, Owl) have history to read.
-    L = QuarterlyLedger(
-        "r", initial_nav={"cash": 1_000_000.0}, start_quarter=_q("2026Q1")
+    L = QuarterlyLedger("r", initial_nav={"cash": 1_000_000.0}, start_quarter=_q("2026Q1"))
+    L.add(
+        quarter=_q("2026Q1"), bucket="cash", flow_type="return", amount_usd=10_000.0, source="cma"
     )
-    L.add(quarter=_q("2026Q1"), bucket="cash", flow_type="return", amount_usd=10_000.0, source="cma")
     L.add(
         quarter=_q("2026Q1"),
         bucket="cash",
@@ -358,10 +352,10 @@ def test_spending_decision_independent_of_allocator_engine():
     # an allocator-different path (e.g. extra rebalance rows). Spending must
     # still produce the same outflow because the rule reads only its own
     # source-filtered spend rows + end_nav_through(q-1).
-    L2 = QuarterlyLedger(
-        "r", initial_nav={"cash": 1_000_000.0}, start_quarter=_q("2026Q1")
+    L2 = QuarterlyLedger("r", initial_nav={"cash": 1_000_000.0}, start_quarter=_q("2026Q1"))
+    L2.add(
+        quarter=_q("2026Q1"), bucket="cash", flow_type="return", amount_usd=10_000.0, source="cma"
     )
-    L2.add(quarter=_q("2026Q1"), bucket="cash", flow_type="return", amount_usd=10_000.0, source="cma")
     L2.add(
         quarter=_q("2026Q1"),
         bucket="cash",

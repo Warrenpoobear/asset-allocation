@@ -124,20 +124,16 @@ class DistributionProducerDiagnostics:
 
     def merge(self, delta: DistributionProducerDiagnosticsDelta) -> None:
         for k, v in delta.emitted_by_domain_usd.items():
-            self.emitted_by_domain_usd[k] = (
-                self.emitted_by_domain_usd.get(k, 0.0) + float(v)
-            )
+            self.emitted_by_domain_usd[k] = self.emitted_by_domain_usd.get(k, 0.0) + float(v)
         for k, v in delta.emitted_by_source_usd.items():
-            self.emitted_by_source_usd[k] = (
-                self.emitted_by_source_usd.get(k, 0.0) + float(v)
-            )
+            self.emitted_by_source_usd[k] = self.emitted_by_source_usd.get(k, 0.0) + float(v)
         for k, v in delta.emitted_by_recurrence_usd.items():
-            self.emitted_by_recurrence_usd[k] = (
-                self.emitted_by_recurrence_usd.get(k, 0.0) + float(v)
+            self.emitted_by_recurrence_usd[k] = self.emitted_by_recurrence_usd.get(k, 0.0) + float(
+                v
             )
         for k, v in delta.emitted_by_confidence_usd.items():
-            self.emitted_by_confidence_usd[k] = (
-                self.emitted_by_confidence_usd.get(k, 0.0) + float(v)
+            self.emitted_by_confidence_usd[k] = self.emitted_by_confidence_usd.get(k, 0.0) + float(
+                v
             )
         self.excluded_restricted_count += int(delta.excluded_restricted_count)
         self.excluded_restricted_usd += float(delta.excluded_restricted_usd)
@@ -171,9 +167,7 @@ class DistributionProducerDiagnostics:
         return float(sum(top3)) / total
 
     def top_n_sources(self, n: int = 3) -> list[tuple[str, float]]:
-        items = sorted(
-            self.emitted_by_source_usd.items(), key=lambda kv: kv[1], reverse=True
-        )
+        items = sorted(self.emitted_by_source_usd.items(), key=lambda kv: kv[1], reverse=True)
         return [(k, float(v)) for k, v in items[:n]]
 
 
@@ -270,9 +264,7 @@ class ConfigDrivenProducer(DistributionProducer):
             by_recurrence[entry.recurrence_type] = (
                 by_recurrence.get(entry.recurrence_type, 0.0) + amt
             )
-            by_confidence[entry.confidence] = (
-                by_confidence.get(entry.confidence, 0.0) + amt
-            )
+            by_confidence[entry.confidence] = by_confidence.get(entry.confidence, 0.0) + amt
 
         return emissions, DistributionProducerDiagnosticsDelta(
             emitted_by_domain_usd=by_domain,
@@ -304,8 +296,8 @@ def make_distribution_producer(
         # imports the producer module; the producer factory only
         # imports ingestion when the workbook engine is selected.
         from aa_model.ingestion.workbook_producer import WorkbookDrivenProducer
+
         return WorkbookDrivenProducer(cfg)
     raise ValueError(
-        f"unknown distribution producer engine {engine!r}; "
-        f"valid: ['config', 'workbook']"
+        f"unknown distribution producer engine {engine!r}; " f"valid: ['config', 'workbook']"
     )

@@ -107,7 +107,10 @@ def test_window_quarters_field_validation():
     # Reject 0.
     with pytest.raises(ValidationError):
         GuardrailConfig(
-            upper_band_pct=0.2, lower_band_pct=0.2, raise_pct=0.1, cut_pct=0.1,
+            upper_band_pct=0.2,
+            lower_band_pct=0.2,
+            raise_pct=0.1,
+            cut_pct=0.1,
             spending_base="distributable_income",
             distribution_window_quarters=0,
             bootstrap_distributable_income_usd=1_000_000.0,
@@ -115,7 +118,10 @@ def test_window_quarters_field_validation():
     # Reject > 20.
     with pytest.raises(ValidationError):
         GuardrailConfig(
-            upper_band_pct=0.2, lower_band_pct=0.2, raise_pct=0.1, cut_pct=0.1,
+            upper_band_pct=0.2,
+            lower_band_pct=0.2,
+            raise_pct=0.1,
+            cut_pct=0.1,
             spending_base="distributable_income",
             distribution_window_quarters=21,
             bootstrap_distributable_income_usd=1_000_000.0,
@@ -126,7 +132,10 @@ def test_bootstrap_field_validation():
     """Phase 12.5 #2: bootstrap > 0; rejects zero, negative, non-finite."""
     # Valid.
     gr = GuardrailConfig(
-        upper_band_pct=0.2, lower_band_pct=0.2, raise_pct=0.1, cut_pct=0.1,
+        upper_band_pct=0.2,
+        lower_band_pct=0.2,
+        raise_pct=0.1,
+        cut_pct=0.1,
         spending_base="distributable_income",
         distribution_window_quarters=4,
         bootstrap_distributable_income_usd=1_000_000.0,
@@ -136,7 +145,10 @@ def test_bootstrap_field_validation():
     # Reject zero.
     with pytest.raises(ValidationError):
         GuardrailConfig(
-            upper_band_pct=0.2, lower_band_pct=0.2, raise_pct=0.1, cut_pct=0.1,
+            upper_band_pct=0.2,
+            lower_band_pct=0.2,
+            raise_pct=0.1,
+            cut_pct=0.1,
             spending_base="distributable_income",
             distribution_window_quarters=4,
             bootstrap_distributable_income_usd=0.0,
@@ -144,7 +156,10 @@ def test_bootstrap_field_validation():
     # Reject negative.
     with pytest.raises(ValidationError):
         GuardrailConfig(
-            upper_band_pct=0.2, lower_band_pct=0.2, raise_pct=0.1, cut_pct=0.1,
+            upper_band_pct=0.2,
+            lower_band_pct=0.2,
+            raise_pct=0.1,
+            cut_pct=0.1,
             spending_base="distributable_income",
             distribution_window_quarters=4,
             bootstrap_distributable_income_usd=-100.0,
@@ -152,7 +167,10 @@ def test_bootstrap_field_validation():
     # Reject non-finite.
     with pytest.raises(ValidationError):
         GuardrailConfig(
-            upper_band_pct=0.2, lower_band_pct=0.2, raise_pct=0.1, cut_pct=0.1,
+            upper_band_pct=0.2,
+            lower_band_pct=0.2,
+            raise_pct=0.1,
+            cut_pct=0.1,
             spending_base="distributable_income",
             distribution_window_quarters=4,
             bootstrap_distributable_income_usd=float("inf"),
@@ -164,41 +182,59 @@ def test_studyconfig_phase125_cross_validation_matrix():
     # 3a: distributable_income without window → fail.
     with pytest.raises(ValidationError):
         GuardrailConfig(
-            upper_band_pct=0.2, lower_band_pct=0.2, raise_pct=0.1, cut_pct=0.1,
+            upper_band_pct=0.2,
+            lower_band_pct=0.2,
+            raise_pct=0.1,
+            cut_pct=0.1,
             spending_base="distributable_income",
             bootstrap_distributable_income_usd=1_000_000.0,
         )
     # 3b: distributable_income without bootstrap → fail.
     with pytest.raises(ValidationError):
         GuardrailConfig(
-            upper_band_pct=0.2, lower_band_pct=0.2, raise_pct=0.1, cut_pct=0.1,
+            upper_band_pct=0.2,
+            lower_band_pct=0.2,
+            raise_pct=0.1,
+            cut_pct=0.1,
             spending_base="distributable_income",
             distribution_window_quarters=4,
         )
     # 3c: window present but spending_base != distributable_income → fail.
     with pytest.raises(ValidationError):
         GuardrailConfig(
-            upper_band_pct=0.2, lower_band_pct=0.2, raise_pct=0.1, cut_pct=0.1,
+            upper_band_pct=0.2,
+            lower_band_pct=0.2,
+            raise_pct=0.1,
+            cut_pct=0.1,
             spending_base="liquid_nav",
             distribution_window_quarters=4,
         )
     # 3d: bootstrap present but spending_base != distributable_income → fail.
     with pytest.raises(ValidationError):
         GuardrailConfig(
-            upper_band_pct=0.2, lower_band_pct=0.2, raise_pct=0.1, cut_pct=0.1,
+            upper_band_pct=0.2,
+            lower_band_pct=0.2,
+            raise_pct=0.1,
+            cut_pct=0.1,
             spending_base="liquid_nav",
             bootstrap_distributable_income_usd=1_000_000.0,
         )
     # 3e: both fields with default base → fail.
     with pytest.raises(ValidationError):
         GuardrailConfig(
-            upper_band_pct=0.2, lower_band_pct=0.2, raise_pct=0.1, cut_pct=0.1,
+            upper_band_pct=0.2,
+            lower_band_pct=0.2,
+            raise_pct=0.1,
+            cut_pct=0.1,
             distribution_window_quarters=4,
             bootstrap_distributable_income_usd=1_000_000.0,
         )
     # 3f: positive case validates cleanly.
     gr_ok = GuardrailConfig(
-        upper_band_pct=0.2, lower_band_pct=0.2, raise_pct=0.1, cut_pct=0.1,
+        upper_band_pct=0.2,
+        lower_band_pct=0.2,
+        raise_pct=0.1,
+        cut_pct=0.1,
         spending_base="distributable_income",
         distribution_window_quarters=4,
         bootstrap_distributable_income_usd=1_000_000.0,
@@ -239,20 +275,29 @@ def test_distribution_inflow_structural_constraints():
     # Zero amount fails.
     with pytest.raises(ValueError, match="amount_usd must be > 0"):
         L.add(
-            quarter=q, bucket="cash", flow_type="distribution_inflow",
-            amount_usd=0.0, source="distribution:real_estate:zero",
+            quarter=q,
+            bucket="cash",
+            flow_type="distribution_inflow",
+            amount_usd=0.0,
+            source="distribution:real_estate:zero",
         )
     # Negative amount fails.
     with pytest.raises(ValueError, match="amount_usd must be > 0"):
         L.add(
-            quarter=q, bucket="cash", flow_type="distribution_inflow",
-            amount_usd=-100.0, source="distribution:real_estate:neg",
+            quarter=q,
+            bucket="cash",
+            flow_type="distribution_inflow",
+            amount_usd=-100.0,
+            source="distribution:real_estate:neg",
         )
     # Non-cash bucket fails.
     with pytest.raises(ValueError, match="must target bucket='cash'"):
         L.add(
-            quarter=q, bucket="re", flow_type="distribution_inflow",
-            amount_usd=100.0, source="distribution:real_estate:wrong_bucket",
+            quarter=q,
+            bucket="re",
+            flow_type="distribution_inflow",
+            amount_usd=100.0,
+            source="distribution:real_estate:wrong_bucket",
         )
 
 
@@ -271,8 +316,11 @@ def _seed_4q_distributions(
         for source, amounts in by_source.items():
             if offset < len(amounts) and amounts[offset] > 0.0:
                 L.add(
-                    quarter=q, bucket="cash", flow_type="distribution_inflow",
-                    amount_usd=amounts[offset], source=source,
+                    quarter=q,
+                    bucket="cash",
+                    flow_type="distribution_inflow",
+                    amount_usd=amounts[offset],
+                    source=source,
                 )
 
 
@@ -293,10 +341,13 @@ def test_distribution_rows_summed_over_trailing_window():
     """Phase 12.5 #7: trailing-4q sum across realized window."""
     start_q = _q("2026Q1")
     L = QuarterlyLedger(
-        "t", initial_nav={"cash": 1_000_000.0}, start_quarter=start_q,
+        "t",
+        initial_nav={"cash": 1_000_000.0},
+        start_quarter=start_q,
     )
     _seed_4q_distributions(
-        L, start_q,
+        L,
+        start_q,
         by_source={
             "distribution:real_estate:bldg_a": [200_000.0, 200_000.0, 200_000.0, 200_000.0],
             "distribution:opco:liv": [50_000.0, 50_000.0, 50_000.0, 50_000.0],
@@ -304,7 +355,10 @@ def test_distribution_rows_summed_over_trailing_window():
     )
     L.finalize()
     base, by_source, is_boot = compute_distributable_income_base(
-        L, prior_quarter=start_q + 3, window_quarters=4, bootstrap_usd=1.0,
+        L,
+        prior_quarter=start_q + 3,
+        window_quarters=4,
+        bootstrap_usd=1.0,
     )
     # 4 quarters × ($200k + $50k) = $1,000,000.
     assert base == pytest.approx(1_000_000.0)
@@ -317,12 +371,14 @@ def test_pe_distribution_rows_excluded_from_rollup():
     """Phase 12.5 #8: pe_distribution rows DO NOT count toward trailing income."""
     start_q = _q("2026Q1")
     L = QuarterlyLedger(
-        "t", initial_nav={"cash": 1_000_000.0, "pe_buyout": 5_000_000.0},
+        "t",
+        initial_nav={"cash": 1_000_000.0, "pe_buyout": 5_000_000.0},
         start_quarter=start_q,
     )
     # Real distribution_inflow rows in 4 quarters.
     _seed_4q_distributions(
-        L, start_q,
+        L,
+        start_q,
         by_source={"distribution:portfolio:dividends": [50_000.0] * 4},
     )
     # Add pe_distribution rows — these must NOT leak into the trailing
@@ -331,16 +387,25 @@ def test_pe_distribution_rows_excluded_from_rollup():
     for i in range(4):
         q = start_q + i
         L.add(
-            quarter=q, bucket="cash", flow_type="pe_distribution",
-            amount_usd=+1_000_000.0, source="pacing:fund_x",
+            quarter=q,
+            bucket="cash",
+            flow_type="pe_distribution",
+            amount_usd=+1_000_000.0,
+            source="pacing:fund_x",
         )
         L.add(
-            quarter=q, bucket="pe_buyout", flow_type="pe_distribution",
-            amount_usd=-1_000_000.0, source="pacing:fund_x",
+            quarter=q,
+            bucket="pe_buyout",
+            flow_type="pe_distribution",
+            amount_usd=-1_000_000.0,
+            source="pacing:fund_x",
         )
     L.finalize()
     base, by_source, _ = compute_distributable_income_base(
-        L, prior_quarter=start_q + 3, window_quarters=4, bootstrap_usd=1.0,
+        L,
+        prior_quarter=start_q + 3,
+        window_quarters=4,
+        bootstrap_usd=1.0,
     )
     # Only the 4 × $50k = $200k of real distribution_inflow should count.
     assert base == pytest.approx(200_000.0)
@@ -353,7 +418,8 @@ def test_by_source_rollup_correct():
     start_q = _q("2026Q1")
     L = QuarterlyLedger("t", initial_nav={"cash": 1_000_000.0}, start_quarter=start_q)
     _seed_4q_distributions(
-        L, start_q,
+        L,
+        start_q,
         by_source={
             "distribution:real_estate:bldg_a": [100_000.0, 100_000.0, 100_000.0, 100_000.0],
             "distribution:real_estate:bldg_b": [50_000.0, 50_000.0, 50_000.0, 50_000.0],
@@ -363,7 +429,10 @@ def test_by_source_rollup_correct():
     )
     L.finalize()
     _, by_source, _ = compute_distributable_income_base(
-        L, prior_quarter=start_q + 3, window_quarters=4, bootstrap_usd=1.0,
+        L,
+        prior_quarter=start_q + 3,
+        window_quarters=4,
+        bootstrap_usd=1.0,
     )
     assert by_source["distribution:real_estate:bldg_a"] == pytest.approx(400_000.0)
     assert by_source["distribution:real_estate:bldg_b"] == pytest.approx(200_000.0)
@@ -381,12 +450,16 @@ def test_insufficient_history_uses_bootstrap():
     # Seed only 2 quarters; window = 4. Realized window extends earlier
     # than start_q → bootstrap.
     _seed_4q_distributions(
-        L, start_q,
+        L,
+        start_q,
         by_source={"distribution:real_estate:bldg_a": [100_000.0, 100_000.0]},
     )
     L.finalize()
     base, by_source, is_boot = compute_distributable_income_base(
-        L, prior_quarter=start_q + 1, window_quarters=4, bootstrap_usd=4_000_000.0,
+        L,
+        prior_quarter=start_q + 1,
+        window_quarters=4,
+        bootstrap_usd=4_000_000.0,
     )
     assert base == pytest.approx(4_000_000.0)
     assert is_boot is True
@@ -398,14 +471,18 @@ def test_window_completion_handoff_to_realized():
     start_q = _q("2026Q1")
     L = QuarterlyLedger("t", initial_nav={"cash": 1_000_000.0}, start_quarter=start_q)
     _seed_4q_distributions(
-        L, start_q,
+        L,
+        start_q,
         by_source={"distribution:portfolio:dividends": [200_000.0] * 4},
     )
     L.finalize()
     # prior_quarter = start_q + 3 means realized window covers
     # start_q .. start_q+3 (4 quarters) — window complete.
     base, _, is_boot = compute_distributable_income_base(
-        L, prior_quarter=start_q + 3, window_quarters=4, bootstrap_usd=4_000_000.0,
+        L,
+        prior_quarter=start_q + 3,
+        window_quarters=4,
+        bootstrap_usd=4_000_000.0,
     )
     assert base == pytest.approx(800_000.0)  # 4 × 200k = realized
     assert is_boot is False
@@ -421,7 +498,9 @@ def test_owl_raises_on_zero_realized_after_bootstrap_window():
     rule = OwlRule()
     L = QuarterlyLedger("t", initial_nav={"cash": 100_000_000.0}, start_quarter=start_q)
     params = SpendingParams(
-        config=cfg, start_quarter=start_q, num_quarters=8,
+        config=cfg,
+        start_quarter=start_q,
+        num_quarters=8,
     )
     # Drive q0..q3 with NO distribution_inflow rows — bootstrap covers
     # the first year. Then year-boundary at q4: window complete (start_q
@@ -430,8 +509,11 @@ def test_owl_raises_on_zero_realized_after_bootstrap_window():
         q = start_q + i
         quarterly = rule.quarterly_outflow_at(L, params, q)
         L.add(
-            quarter=q, bucket="cash", flow_type="spend",
-            amount_usd=-quarterly, source=rule.SOURCE_ID,
+            quarter=q,
+            bucket="cash",
+            flow_type="spend",
+            amount_usd=-quarterly,
+            source=rule.SOURCE_ID,
         )
     with pytest.raises(ValueError, match="realized trailing distributable income"):
         rule.quarterly_outflow_at(L, params, start_q + 4)
@@ -490,13 +572,17 @@ def test_report_renders_distributable_income_advisory(tmp_path, repo_root):
     }
     L = QuarterlyLedger(
         "t",
-        initial_nav={b: 25_000_000.0 for b in ("cash", "public_bond", "public_equity", "pe_buyout")},
+        initial_nav={
+            b: 25_000_000.0 for b in ("cash", "public_bond", "public_equity", "pe_buyout")
+        },
         start_quarter=_q("2026Q1"),
     )
     L.finalize()
     out = tmp_path / "report.md"
     write_markdown_report(
-        out, cfg=cfg, ledger=L,
+        out,
+        cfg=cfg,
+        ledger=L,
         run_id="test_phase125",
         config_hash="0" * 12,
         fixtures_hash="0" * 12,

@@ -99,6 +99,7 @@ def run_orchestrator(
         workbook_ingestion_result,
         position_ingestion_result,
         liquidity_coverage_result,
+        pe_call_bridge_diag,
     ) = _build_ledger(cfg, run_id)
     ledger.validate(expected_externals_by_quarter=expected_externals)
 
@@ -127,6 +128,7 @@ def run_orchestrator(
             workbook_ingestion_result=workbook_ingestion_result,
             position_ingestion_result=position_ingestion_result,
             liquidity_coverage_result=liquidity_coverage_result,
+            pe_call_bridge_diag=pe_call_bridge_diag,
         )
         outputs.append("report.md")
         outputs.append("manifest.json")
@@ -166,6 +168,7 @@ def _build_ledger(
                     # io/schemas clean of an ingestion dependency.
     object | None,  # PositionIngestionResult | None
     object | None,  # LiquidityCoverageResult | None
+    object | None,  # PECallObligationBridgeDiagnostics | None — Phase 19
 ]:
     start_q = pd.Period(cfg.base.horizon.start_quarter, freq="Q-DEC")
     n_q = cfg.base.horizon.num_quarters
@@ -186,14 +189,10 @@ def _build_ledger(
         start_quarter=start_q,
         num_quarters=n_q,
         cma_liquidity=cma.liquidity if not cma.liquidity.empty else None,
-        cma_income_producing=(
-            cma.income_producing if not cma.income_producing.empty else None
-        ),
+        cma_income_producing=(cma.income_producing if not cma.income_producing.empty else None),
     )
     alloc.fit(returns=pd.DataFrame(), cma=cma, constraints=Constraints())
-    alloc_params = AllocationParams(
-        config=cfg.allocation, start_quarter=start_q, num_quarters=n_q
-    )
+    alloc_params = AllocationParams(config=cfg.allocation, start_quarter=start_q, num_quarters=n_q)
     impl = make_implementation(engine=cfg.base.implementation.engine)
     cost_model = CostModel(bps_per_trade=cfg.base.implementation.bps_per_trade)
 
@@ -208,9 +207,7 @@ def _build_ledger(
     # Phase 7: deterministic public_equity quarterly return path,
     # indexed by Period. STAIRS reads it for the coupling term; TA
     # ignores it. Built from rate_table so it tracks scenario overrides.
-    horizon_periods = pd.PeriodIndex(
-        [start_q + i for i in range(n_q)], name="quarter"
-    )
+    horizon_periods = pd.PeriodIndex([start_q + i for i in range(n_q)], name="quarter")
     public_equity_rates = rate_table.get("public_equity", [0.0] * n_q)
     public_equity_path = pd.Series(
         public_equity_rates, index=horizon_periods, dtype=float, name="public_equity"
@@ -256,9 +253,8 @@ def _build_ledger(
             ingest_workbook,
             workbook_lines_to_producer_config,
         )
-        manifest = WorkbookManifestConfig.model_validate(
-            cfg.workbook_ingestion.manifest
-        )
+
+        manifest = WorkbookManifestConfig.model_validate(cfg.workbook_ingestion.manifest)
         workbook_ingestion_result = ingest_workbook(
             cfg.workbook_ingestion.workbook_path,
             manifest,
@@ -278,14 +274,10 @@ def _build_ledger(
     producer: DistributionProducer | None = None
     distribution_producer_diagnostics: DistributionProducerDiagnostics | None = None
     if workbook_derived_producer_config is not None:
-        producer = make_distribution_producer(
-            workbook_derived_producer_config, engine="workbook"
-        )
+        producer = make_distribution_producer(workbook_derived_producer_config, engine="workbook")
         distribution_producer_diagnostics = DistributionProducerDiagnostics()
     elif cfg.distribution_producer is not None:
-        producer = make_distribution_producer(
-            cfg.distribution_producer, engine="config"
-        )
+        producer = make_distribution_producer(cfg.distribution_producer, engine="config")
         distribution_producer_diagnostics = DistributionProducerDiagnostics()
 
     for i in range(n_q):
@@ -408,9 +400,7 @@ def _build_ledger(
         # engines the default ``target_at`` returns ``weights()`` and this
         # reduces to the pre-4b static-target behavior bit-for-bit.
         current_dollars = pd.Series(running_nav, dtype=float)
-        target_weights = alloc.target_at(
-            ledger, alloc_params, q, current_dollars, cost_model
-        )
+        target_weights = alloc.target_at(ledger, alloc_params, q, current_dollars, cost_model)
 
         # 6.6. Phase 8 / L8: illiquidity overlay. Locks every illiquid
         # bucket at its current dollars and renormalises the liquid
@@ -488,8 +478,8 @@ def _build_ledger(
     # Phase 18 / L20: extract spending base from Owl diagnostics for
     # the liquidity coverage bridge. Returns (None, []) for non-Owl
     # rules or runs too short to reach a year-boundary.
-    spending_base_for_coverage, bridge_advisories = (
-        _extract_spending_base_for_coverage(spending_diagnostics, cfg)
+    spending_base_for_coverage, bridge_advisories = _extract_spending_base_for_coverage(
+        spending_diagnostics, cfg
     )
 
     # Phase 17 / L20: position ingestion + liquidity coverage. Run after
@@ -497,6 +487,7 @@ def _build_ledger(
     # Default-off: None values when position_ingestion is not configured.
     position_ingestion_result = None
     liquidity_coverage_result = None
+    pe_call_bridge_diag = None  # Phase 19
     if cfg.position_ingestion is not None:
         from pathlib import Path as _Path
 
@@ -509,9 +500,7 @@ def _build_ledger(
         workbook_path = _Path(cfg.position_ingestion.workbook_path)
         # Tightening 3: fail fast if either path is missing.
         if not manifest_path.exists():
-            raise FileNotFoundError(
-                f"Position manifest not found: {manifest_path.resolve()}"
-            )
+            raise FileNotFoundError(f"Position manifest not found: {manifest_path.resolve()}")
         if not workbook_path.exists():
             raise FileNotFoundError(
                 f"Investment Summary workbook not found: {workbook_path.resolve()}"
@@ -522,9 +511,46 @@ def _build_ledger(
             position_manifest,
             manifest_version=cfg.position_ingestion.manifest_version,
         )
+
+        # Phase 19 / L20: derive next-12m capital-call obligation from PE
+        # pacing projections. Measurement point = position manifest as_of_date.
+        # Override precedence: explicit user value takes priority; PE-derived
+        # value used only when user did not set next_12m_capital_calls_usd.
+        from aa_model.pe.call_obligation import (
+            PECallObligationBridgeDiagnostics,
+            derive_pe_capital_call_obligation,
+        )
+
+        coverage_q = pd.Period(position_manifest.as_of_date, freq="Q-DEC")
+        user_explicit_calls = (cfg.liquidity_obligations or {}).get(
+            "next_12m_capital_calls_usd"
+        )
+        if user_explicit_calls is not None:
+            _window = [str(coverage_q + i) for i in range(1, 5)]
+            pe_call_bridge_diag = PECallObligationBridgeDiagnostics(
+                next_12m_capital_calls_usd=float(user_explicit_calls),
+                source="explicit",
+                coverage_quarter=str(coverage_q),
+                quarters_included=_window,
+                quarters_in_horizon=[],
+                fund_count=0,
+                calls_by_quarter={},
+                top_contributors=[],
+                advisories=[],
+            )
+            pe_call_obligation_usd: float | None = float(user_explicit_calls)
+        else:
+            pe_call_bridge_diag = derive_pe_capital_call_obligation(
+                pe_proj, coverage_q
+            )
+            pe_call_obligation_usd = pe_call_bridge_diag.next_12m_capital_calls_usd
+
         liquidity_coverage_result = _run_liquidity_coverage(
-            position_ingestion_result, position_manifest, cfg,
+            position_ingestion_result,
+            position_manifest,
+            cfg,
             spending_base=spending_base_for_coverage,
+            pe_call_obligation_usd=pe_call_obligation_usd,
         )
         # Phase 18: inject bootstrap / run-too-short advisories from
         # the spending-base extraction into the coverage diagnostics.
@@ -544,6 +570,7 @@ def _build_ledger(
         workbook_ingestion_result,
         position_ingestion_result,
         liquidity_coverage_result,
+        pe_call_bridge_diag,  # Phase 19
     )
 
 
@@ -570,8 +597,9 @@ def _run_liquidity_coverage(
     cfg: StudyConfig,
     *,
     spending_base: object = None,
+    pe_call_obligation_usd: float | None = None,
 ) -> object:
-    """Phase 17/18 / L20 — orchestration helper for liquidity coverage.
+    """Phase 17/18/19 / L20 — orchestration helper for liquidity coverage.
 
     Phase 17 reviewer tightening 4: threads positions, manager_terms,
     liquidity_tier_overrides, liquidity_obligations,
@@ -580,6 +608,12 @@ def _run_liquidity_coverage(
     Phase 18: ``spending_base`` is now the reconstructed
     ``SpendingBaseBreakdown`` from the Owl run (or ``None`` for non-Owl
     rules and runs too short to have a year-boundary snapshot).
+
+    Phase 19: ``pe_call_obligation_usd`` is the resolved next-12m
+    capital-call obligation (explicit user value or PE-derived; ``None``
+    when unavailable). Injected into ``LiquidityObligationConfig`` only
+    when the user did not set ``next_12m_capital_calls_usd`` explicitly
+    (override precedence already resolved by ``_build_ledger``).
     """
     from aa_model.liquidity.coverage import (
         LiquidityCoverageConfig,
@@ -590,12 +624,11 @@ def _run_liquidity_coverage(
     pr = position_result
     pm = position_manifest
 
-    obligations = LiquidityObligationConfig.model_validate(
-        cfg.liquidity_obligations or {}
-    )
-    coverage_cfg = LiquidityCoverageConfig.model_validate(
-        cfg.liquidity_coverage_config or {}
-    )
+    obligations_dict = dict(cfg.liquidity_obligations or {})
+    if pe_call_obligation_usd is not None:
+        obligations_dict["next_12m_capital_calls_usd"] = pe_call_obligation_usd
+    obligations = LiquidityObligationConfig.model_validate(obligations_dict)
+    coverage_cfg = LiquidityCoverageConfig.model_validate(cfg.liquidity_coverage_config or {})
     spending_base_is_flow = (
         cfg.spending.rule == "owl"
         and cfg.spending.guardrail is not None
@@ -663,9 +696,7 @@ def _extract_spending_base_for_coverage(
     mode = spending_diagnostics.get("spending_base_mode")  # None → total_nav
 
     if mode == "distributable_income":
-        base_usd = float(
-            spending_diagnostics.get("trailing_distributable_income_usd", 0.0)
-        )
+        base_usd = float(spending_diagnostics.get("trailing_distributable_income_usd", 0.0))
         if base_usd <= 0.0:
             advisories.append(
                 "spending_base bridge: distributable_income run too short "
@@ -680,9 +711,7 @@ def _extract_spending_base_for_coverage(
                 "value (run window < distribution window) — "
                 "income estimate is static fallback"
             )
-        by_source = dict(
-            spending_diagnostics.get("distributable_income_by_source_usd", {})
-        )
+        by_source = dict(spending_diagnostics.get("distributable_income_by_source_usd", {}))
         breakdown = SpendingBaseBreakdown(
             base_usd=base_usd,
             excluded_by_tier_usd={},

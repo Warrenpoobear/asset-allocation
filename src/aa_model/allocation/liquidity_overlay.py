@@ -104,9 +104,7 @@ def apply_liquidity_overlay(
     # loudly with a per-bucket breakdown so the user can see which
     # illiquid bucket pushed total above NAV.
     if liquid_nav < -1e-6:
-        breakdown = {
-            b: float(cur[b]) for b in idx if illiquid_mask[b]
-        }
+        breakdown = {b: float(cur[b]) for b in idx if illiquid_mask[b]}
         raise ValueError(
             f"apply_liquidity_overlay: liquid_nav = {liquid_nav:,.2f} < 0; "
             f"V_total = {V_total:,.2f}, illiquid_current = "
@@ -223,9 +221,7 @@ def _build_diagnostics(
     sum_abs = sum(abs(d) for d in drift_per.values())
 
     clipped = sum(
-        1
-        for b in idx
-        if liquid_mask[b] and abs(float(execution_dollars[b])) <= _TINY_DOLLAR
+        1 for b in idx if liquid_mask[b] and abs(float(execution_dollars[b])) <= _TINY_DOLLAR
     )
 
     return LiquidityOverlayDiagnostics(

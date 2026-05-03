@@ -47,8 +47,7 @@ def resolve_phase12_tier(
     """
     if bucket not in _DEFAULT_MAPPING:
         raise ValueError(
-            f"Unknown Phase 15 liquidity_bucket: {bucket!r}. "
-            f"Valid: {sorted(_DEFAULT_MAPPING)}"
+            f"Unknown Phase 15 liquidity_bucket: {bucket!r}. " f"Valid: {sorted(_DEFAULT_MAPPING)}"
         )
     if overrides and bucket in overrides:
         return overrides[bucket]

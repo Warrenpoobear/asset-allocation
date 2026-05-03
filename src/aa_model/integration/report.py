@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from aa_model.ingestion.schemas import IngestionResult
     from aa_model.ingestion.schemas_position import PositionIngestionResult
     from aa_model.liquidity.coverage import LiquidityCoverageResult
+    from aa_model.pe.call_obligation import PECallObligationBridgeDiagnostics
     from aa_model.producers.distribution import DistributionProducerDiagnostics
 
 
@@ -34,8 +35,8 @@ if TYPE_CHECKING:
 # flags interpretation risk. The values are documented round-number
 # heuristics, not derived from any specific market study. See
 # MODEL_DOCUMENTATION.md §Phase 10 design.
-_TX_COST_HEURISTIC_PCT_OF_INITIAL_NAV: float = 0.01   # 1% cumulative
-_TX_QUARTERLY_LIQUID_TURNOVER_HEURISTIC_PCT: float = 0.25   # 25% per quarter
+_TX_COST_HEURISTIC_PCT_OF_INITIAL_NAV: float = 0.01  # 1% cumulative
+_TX_QUARTERLY_LIQUID_TURNOVER_HEURISTIC_PCT: float = 0.25  # 25% per quarter
 
 
 def write_markdown_report(
@@ -55,6 +56,7 @@ def write_markdown_report(
     workbook_ingestion_result: IngestionResult | None = None,
     position_ingestion_result: PositionIngestionResult | None = None,
     liquidity_coverage_result: LiquidityCoverageResult | None = None,
+    pe_call_bridge_diag: PECallObligationBridgeDiagnostics | None = None,
 ) -> None:
     end_nav = ledger.end_nav_by_quarter()
     initial_total = sum(ledger.initial_nav.values())
@@ -111,9 +113,7 @@ def write_markdown_report(
     if cma is not None and not cma.expected_returns_annual.empty:
         lines.append("## Capital market assumptions")
         lines.append("")
-        lines.append(
-            "| bucket | expected return (annual) | volatility (annual) | liquidity |"
-        )
+        lines.append("| bucket | expected return (annual) | volatility (annual) | liquidity |")
         lines.append("|---|---:|---:|:---:|")
         buckets = list(cma.expected_returns_annual.sort_index().index)
         for b in buckets:
@@ -163,20 +163,14 @@ def write_markdown_report(
         if shock_diagnostics.shock_type == "scale":
             lines.append(f"- magnitude: {float(shock_diagnostics.magnitude):g}")
             lines.append(
-                f"- entries clipped to [-1, 1]: "
-                f"{int(shock_diagnostics.clipped_pairs or 0)}"
+                f"- entries clipped to [-1, 1]: " f"{int(shock_diagnostics.clipped_pairs or 0)}"
             )
         else:  # override
-            lines.append(
-                f"- pairwise replacements: {int(shock_diagnostics.override_pairs or 0)}"
-            )
-        lines.append(
-            f"- max |Δρ| vs baseline: {float(shock_diagnostics.max_abs_delta):.4f}"
-        )
+            lines.append(f"- pairwise replacements: {int(shock_diagnostics.override_pairs or 0)}")
+        lines.append(f"- max |Δρ| vs baseline: {float(shock_diagnostics.max_abs_delta):.4f}")
         lines.append("- PSD: pass")
         lines.append(
-            "- note: CMA baseline preserved; this is a perturbation layer "
-            "applied to a copy."
+            "- note: CMA baseline preserved; this is a perturbation layer " "applied to a copy."
         )
         lines.append("")
 
@@ -203,20 +197,14 @@ def write_markdown_report(
                 ad = abs(d)
                 if b not in worst_per_bucket or ad > worst_per_bucket[b][3]:
                     worst_per_bucket[b] = (q_str, cur_w, d, ad)
-        total_clipped = sum(
-            d.clipped_to_zero_liquid_count for _q, d in overlay_history
-        )
+        total_clipped = sum(d.clipped_to_zero_liquid_count for _q, d in overlay_history)
 
         lines.append("## Illiquidity overlay")
         lines.append("")
-        lines.append(
-            f"- illiquid buckets locked: {sorted(illiquid_buckets)}"
-        )
+        lines.append(f"- illiquid buckets locked: {sorted(illiquid_buckets)}")
         lines.append("- per-bucket worst-quarter drift:")
         lines.append("")
-        lines.append(
-            "| bucket | policy | worst current | drift (current − policy) | quarter |"
-        )
+        lines.append("| bucket | policy | worst current | drift (current − policy) | quarter |")
         lines.append("|---|---:|---:|---:|---|")
         for b in sorted(illiquid_buckets):
             q_str, cur_w, d, _ad = worst_per_bucket[b]
@@ -228,19 +216,14 @@ def write_markdown_report(
 
         # Aggregate diagnostics
         max_overall = max(
-            (
-                d.max_abs_illiquid_drift
-                for _q, d in overlay_history
-            ),
+            (d.max_abs_illiquid_drift for _q, d in overlay_history),
             default=0.0,
         )
-        sum_overall_means = (
-            sum(d.sum_abs_illiquid_drift for _q, d in overlay_history)
-            / max(len(overlay_history), 1)
+        sum_overall_means = sum(d.sum_abs_illiquid_drift for _q, d in overlay_history) / max(
+            len(overlay_history), 1
         )
         lines.append(
-            f"- max |drift| across all illiquid buckets × quarters: "
-            f"{max_overall * 100:.2f}%"
+            f"- max |drift| across all illiquid buckets × quarters: " f"{max_overall * 100:.2f}%"
         )
         lines.append(
             f"- mean Σ|drift| per quarter (across illiquid buckets): "
@@ -321,9 +304,7 @@ def write_markdown_report(
                 .sort_index()
             )
             lines.append("| manager | " + " | ".join(piv.columns) + " |")
-            lines.append(
-                "|---" + "|---:" * len(piv.columns) + "|"
-            )
+            lines.append("|---" + "|---:" * len(piv.columns) + "|")
             for mgr, row in piv.iterrows():
                 cells = [f"${float(v):,.0f}" for v in row]
                 lines.append(f"| {mgr} | " + " | ".join(cells) + " |")
@@ -339,9 +320,7 @@ def write_markdown_report(
             # pe_call has paired rows (positive on sleeve, negative on
             # cash). Take only the sleeve side — amount > 0.
             calls = calls[calls["amount_usd"] > 0]
-            calls_per_fund = (
-                calls.groupby("fund_name")["amount_usd"].sum().to_dict()
-            )
+            calls_per_fund = calls.groupby("fund_name")["amount_usd"].sum().to_dict()
         else:
             calls_per_fund = {}
         unfunded_rows: list[dict] = []
@@ -365,9 +344,7 @@ def write_markdown_report(
             agg["unfunded_pct"] = (
                 agg["unfunded_usd"] / agg["commitment_usd"].replace(0, float("nan"))
             ).fillna(0.0) * 100.0
-            lines.append(
-                "| manager | commitment | called | unfunded | unfunded % |"
-            )
+            lines.append("| manager | commitment | called | unfunded | unfunded % |")
             lines.append("|---|---:|---:|---:|---:|")
             for mgr, row in agg.sort_index().iterrows():
                 lines.append(
@@ -395,9 +372,7 @@ def write_markdown_report(
             mgr_calls = calls.groupby("manager")["amount_usd"].sum()
             mgr_dists = dists.groupby("manager")["amount_usd"].sum()
             all_managers = sorted(set(mgr_calls.index) | set(mgr_dists.index))
-            lines.append(
-                "| manager | cumulative calls | cumulative distributions |"
-            )
+            lines.append("| manager | cumulative calls | cumulative distributions |")
             lines.append("|---|---:|---:|")
             for mgr in all_managers:
                 c = float(mgr_calls.get(mgr, 0.0))
@@ -432,18 +407,14 @@ def write_markdown_report(
         lines.append("")
         if not commit_rows.empty:
             mgr_total = (
-                commit_rows.groupby("manager")["commitment_usd"]
-                .sum()
-                .sort_values(ascending=False)
+                commit_rows.groupby("manager")["commitment_usd"].sum().sort_values(ascending=False)
             )
             total = float(mgr_total.sum())
             lines.append("| rank | manager | commitment | share |")
             lines.append("|---|---|---:|---:|")
             for i, (mgr, v) in enumerate(mgr_total.head(3).items(), start=1):
                 share = (float(v) / total * 100.0) if total > 0 else 0.0
-                lines.append(
-                    f"| {i} | {mgr} | ${float(v):,.0f} | {share:.1f}% |"
-                )
+                lines.append(f"| {i} | {mgr} | ${float(v):,.0f} | {share:.1f}% |")
             lines.append("")
 
         # 6. NAV by manager at end of horizon.
@@ -469,14 +440,11 @@ def write_markdown_report(
                     ].sum()
                 )
                 dist = float(
-                    sub[
-                        (sub["flow_type"] == "pe_distribution")
-                        & (sub["amount_usd"] < 0)
-                    ]["amount_usd"].sum()
+                    sub[(sub["flow_type"] == "pe_distribution") & (sub["amount_usd"] < 0)][
+                        "amount_usd"
+                    ].sum()
                 )  # negative
-                mark = float(
-                    sub[sub["flow_type"] == "pe_nav_mark"]["amount_usd"].sum()
-                )
+                mark = float(sub[sub["flow_type"] == "pe_nav_mark"]["amount_usd"].sum())
                 per_fund_nav[fname] = call + dist + mark  # dist already negative
             mgr_nav: dict[str, float] = {}
             for fname, v in per_fund_nav.items():
@@ -560,14 +528,10 @@ def write_markdown_report(
         # that case so the diagnostic still surfaces.
         if cma is not None and not cma.liquidity.empty:
             liquid_buckets = {
-                str(b)
-                for b, tag in cma.liquidity.items()
-                if str(tag) in ("liquid", "semi_liquid")
+                str(b) for b, tag in cma.liquidity.items() if str(tag) in ("liquid", "semi_liquid")
             }
         else:
-            liquid_buckets = {
-                b for b in full_df["bucket"].unique() if not str(b).startswith("pe_")
-            }
+            liquid_buckets = {b for b in full_df["bucket"].unique() if not str(b).startswith("pe_")}
 
         rb = full_df[full_df["flow_type"] == "rebalance"].copy()
         if not rb.empty:
@@ -578,28 +542,21 @@ def write_markdown_report(
         # Liquid turnover totals: paired buy / sell rows sum to zero per
         # quarter, so the one-side trade volume is sum(|trade|) / 2.
         if not rb_liquid.empty:
-            total_liquid_turnover = float(
-                rb_liquid["amount_usd"].abs().sum() / 2.0
-            )
-            rb_liquid_per_q = (
-                rb_liquid.groupby("quarter")["amount_usd"]
-                .apply(lambda s: float(s.abs().sum() / 2.0))
+            total_liquid_turnover = float(rb_liquid["amount_usd"].abs().sum() / 2.0)
+            rb_liquid_per_q = rb_liquid.groupby("quarter")["amount_usd"].apply(
+                lambda s: float(s.abs().sum() / 2.0)
             )
         else:
             total_liquid_turnover = 0.0
             rb_liquid_per_q = pd.Series([], dtype=float)
 
-        n_quarters = (
-            int(full_df["quarter"].nunique()) if not full_df.empty else 0
-        )
+        n_quarters = int(full_df["quarter"].nunique()) if not full_df.empty else 0
         mean_quarterly_liquid_turnover = (
             total_liquid_turnover / n_quarters if n_quarters > 0 else 0.0
         )
 
         initial_total = sum(ledger.initial_nav.values()) if ledger.initial_nav else 0.0
-        cum_tx_pct = (
-            cum_tx / initial_total * 100.0 if initial_total > 0 else 0.0
-        )
+        cum_tx_pct = cum_tx / initial_total * 100.0 if initial_total > 0 else 0.0
         if not rb_liquid_per_q.empty and initial_total > 0:
             max_q_turnover_pct = float(rb_liquid_per_q.max() / initial_total * 100.0)
         else:
@@ -620,18 +577,14 @@ def write_markdown_report(
             f"${mean_quarterly_liquid_turnover / 1e3:,.0f}K / quarter mean"
         )
         lines.append(
-            f"- max single-quarter liquid turnover as % of NAV: "
-            f"{max_q_turnover_pct:.2f}%"
+            f"- max single-quarter liquid turnover as % of NAV: " f"{max_q_turnover_pct:.2f}%"
         )
 
         # Three-message advisory, priority order:
         #   1. max quarterly turnover > 25% wins
         #   2. cumulative cost > 1% of initial NAV
         #   3. otherwise, all-clear
-        if (
-            max_q_turnover_pct
-            > _TX_QUARTERLY_LIQUID_TURNOVER_HEURISTIC_PCT * 100.0
-        ):
+        if max_q_turnover_pct > _TX_QUARTERLY_LIQUID_TURNOVER_HEURISTIC_PCT * 100.0:
             lines.append(
                 f"- advisory: ⚠️ max quarterly liquid turnover > "
                 f"{_TX_QUARTERLY_LIQUID_TURNOVER_HEURISTIC_PCT * 100:.0f}% of NAV "
@@ -757,17 +710,11 @@ def write_markdown_report(
             trailing_income = float(
                 spending_diagnostics.get("trailing_distributable_income_usd", 0.0)
             )
-            by_source = spending_diagnostics.get(
-                "distributable_income_by_source_usd", {}
-            )
-            used_bootstrap = bool(
-                spending_diagnostics.get("used_bootstrap_at_run_end", False)
-            )
+            by_source = spending_diagnostics.get("distributable_income_by_source_usd", {})
+            used_bootstrap = bool(spending_diagnostics.get("used_bootstrap_at_run_end", False))
             gr = cfg.spending.guardrail
             window_q = gr.distribution_window_quarters if gr is not None else None
-            bootstrap_usd = (
-                gr.bootstrap_distributable_income_usd if gr is not None else None
-            )
+            bootstrap_usd = gr.bootstrap_distributable_income_usd if gr is not None else None
             # Render only when Owl entered the year-boundary path —
             # diagnostics populated.
             if base_usd > 0.0 and total_nav > 0.0:
@@ -783,8 +730,7 @@ def write_markdown_report(
                 )
                 if bootstrap_usd is not None:
                     lines.append(
-                        f"  - bootstrap distributable income:     "
-                        f"${float(bootstrap_usd):,.0f}"
+                        f"  - bootstrap distributable income:     " f"${float(bootstrap_usd):,.0f}"
                     )
                 lines.append(
                     "  - source of base this year:           "
@@ -793,9 +739,7 @@ def write_markdown_report(
                 if by_source:
                     lines.append("- distributable income by source (run end):")
                     for src in sorted(by_source.keys()):
-                        lines.append(
-                            f"  - {src}: ${float(by_source[src]):,.0f}"
-                        )
+                        lines.append(f"  - {src}: ${float(by_source[src]):,.0f}")
                 lines.append("- withdrawal-rate comparison (run end):")
                 lines.append(f"  - rate vs total NAV:                  {rate_total * 100:.2f}%")
                 lines.append(
@@ -804,10 +748,7 @@ def write_markdown_report(
                     "← rate the household actually faces"
                 )
                 lines.append("- regime:")
-                lines.append(
-                    "  - flow-side aware (selected base = trailing realized "
-                    "income)"
-                )
+                lines.append("  - flow-side aware (selected base = trailing realized " "income)")
                 if rate_base >= 1.00:
                     lines.append(
                         "  - **STRONG WARNING — rate vs distributable-income "
@@ -876,8 +817,7 @@ def write_markdown_report(
             lines.append("- run-end totals:")
             lines.append(f"  - total NAV:     ${total_nav:,.0f}")
             lines.append(
-                f"  - spending base: ${base_usd:,.0f}   "
-                f"({ratio * 100:.0f}% of total NAV)"
+                f"  - spending base: ${base_usd:,.0f}   " f"({ratio * 100:.0f}% of total NAV)"
             )
             if excl_by_tier:
                 lines.append("- excluded NAV by liquidity tier:")
@@ -889,8 +829,7 @@ def write_markdown_report(
                 for flag in (False, True):
                     if flag in excl_by_inc:
                         lines.append(
-                            f"  - income_producing={flag}: "
-                            f"${float(excl_by_inc[flag]):,.0f}"
+                            f"  - income_producing={flag}: " f"${float(excl_by_inc[flag]):,.0f}"
                         )
             lines.append("- withdrawal-rate comparison (run end):")
             lines.append(f"  - rate vs total NAV:     {rate_total * 100:.2f}%")
@@ -936,12 +875,7 @@ def write_markdown_report(
         # illiquid / locked_strategic. The diagnostic depends on the
         # OwlRule having seen a year-boundary path (so the snapshot is
         # populated); short runs (<4 quarters) skip this section.
-        if (
-            is_default
-            and total_nav > 0.0
-            and excl_by_tier
-            and material_share >= 0.30
-        ):
+        if is_default and total_nav > 0.0 and excl_by_tier and material_share >= 0.30:
             illiquid_usd = float(excl_by_tier.get("illiquid", 0.0))
             locked_usd = float(excl_by_tier.get("locked_strategic", 0.0))
             lines.append("## Owl spending base (advisory)")
@@ -1087,9 +1021,7 @@ def write_markdown_report(
                 + ")"
             )
         if wir_diag.missing_optional_sheets:
-            lines.append(
-                f"  - missing optional: {len(wir_diag.missing_optional_sheets)}"
-            )
+            lines.append(f"  - missing optional: {len(wir_diag.missing_optional_sheets)}")
         lines.append("- rows:")
         lines.append(f"  - parsed (data lines): {len(workbook_ingestion_result.cash_flow_lines)}")
         lines.append(f"  - blank skipped: {wir_diag.blank_rows_skipped}")
@@ -1105,7 +1037,7 @@ def write_markdown_report(
                 lines.append(f"  - {entity_id}: ${amt:,.0f}")
         if wir_diag.board_snapshot_reconciliations:
             lines.append("- board-snapshot reconciliation (advisory):")
-            for label, snap, det, abs_d, abs_pct in wir_diag.board_snapshot_reconciliations:
+            for label, snap, det, _abs_d, abs_pct in wir_diag.board_snapshot_reconciliations:
                 tag = " — within tolerance" if abs_pct <= 0.5 else " — **WARNING (>0.5%)**"
                 lines.append(
                     f"  - {label!r}: snapshot=${snap:,.0f}  detail=${det:,.0f}  "
@@ -1182,6 +1114,48 @@ def write_markdown_report(
                 liquidity_coverage_result,
                 spending_base_mode=spending_base_mode,
             )
+        )
+        lines.append("")
+
+    # PE capital-call obligation bridge (Phase 19 / L20). Rendered when
+    # position ingestion is configured and a bridge result was produced.
+    # Three source variants: "explicit" (user-provided), "pe_pacing"
+    # (derived from forward projections), "unavailable" (no projections).
+    if pe_call_bridge_diag is not None:
+        d19 = pe_call_bridge_diag
+        calls_fmt = (
+            f"${d19.next_12m_capital_calls_usd:,.0f}"
+            if d19.next_12m_capital_calls_usd is not None
+            else "n/a"
+        )
+        lines.append("## PE capital-call obligation bridge (Phase 19, advisory)")
+        lines.append("")
+        lines.append(f"  source:                    {d19.source}")
+        lines.append(f"  coverage_quarter:          {d19.coverage_quarter}")
+        lines.append(f"  next_12m_capital_calls:    {calls_fmt}")
+        lines.append(f"  quarters_included:         {', '.join(d19.quarters_included)}")
+        if d19.quarters_in_horizon:
+            lines.append(f"  quarters_in_horizon:       {', '.join(d19.quarters_in_horizon)}")
+        if d19.calls_by_quarter:
+            lines.append("  calls_by_quarter:")
+            for q_str in sorted(d19.calls_by_quarter.keys()):
+                lines.append(f"    {q_str}: ${d19.calls_by_quarter[q_str]:,.0f}")
+        if d19.top_contributors:
+            lines.append(f"  top contributors (fund, next-12m call):")
+            for fund_name, amt in d19.top_contributors:
+                lines.append(f"    {fund_name}: ${amt:,.0f}")
+        if d19.advisories:
+            lines.append(
+                f"  ADVISORIES ({len(d19.advisories)}): "
+                + "; ".join(d19.advisories)
+            )
+        lines.append("")
+        lines.append(
+            "_PE calls are derived from deterministic forward-pacing "
+            "projections (Phase 7 TA/STAIRS). Actual capital calls depend "
+            "on GP discretion, market conditions, and fund-level pacing "
+            "decisions that the model cannot assert. T4: calls are never "
+            "inferred from unfunded commitments × a percentage._"
         )
         lines.append("")
 

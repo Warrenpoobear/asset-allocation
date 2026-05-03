@@ -74,9 +74,7 @@ def _shipped_pacing(repo_root: Path) -> PEPacingConfig:
     """The repo-shipped pe_pacing.yaml as a parsed PEPacingConfig
     (without stairs_defaults). Useful as a baseline for parity tests.
     """
-    payload = yaml.safe_load(
-        (repo_root / "configs" / "pe_pacing.yaml").read_text(encoding="utf-8")
-    )
+    payload = yaml.safe_load((repo_root / "configs" / "pe_pacing.yaml").read_text(encoding="utf-8"))
     return PEPacingConfig.model_validate(payload)
 
 
@@ -144,9 +142,7 @@ def test_stairs_engine_without_stairs_defaults_fails(repo_root: Path):
     base_path.write_text(yaml.safe_dump(base), encoding="utf-8")
     try:
         cfg = load_study_config(base_path)
-        with pytest.raises(
-            ValueError, match="requires pe_pacing.stairs_defaults"
-        ):
+        with pytest.raises(ValueError, match="requires pe_pacing.stairs_defaults"):
             validate_study_config(cfg)
     finally:
         base_path.unlink(missing_ok=True)
@@ -177,9 +173,7 @@ def test_stairs_engine_with_sleeve_mismatch_fails(repo_root: Path):
 
     try:
         cfg = load_study_config(base_path)
-        with pytest.raises(
-            ValueError, match=r"missing: \['pe_buyout'\].*extra: \['pe_growth'\]"
-        ):
+        with pytest.raises(ValueError, match=r"missing: \['pe_buyout'\].*extra: \['pe_growth'\]"):
             validate_study_config(cfg)
     finally:
         base_path.unlink(missing_ok=True)
@@ -207,9 +201,7 @@ def test_stairs_at_zero_beta_matches_ta_per_fund(repo_root: Path):
     # to prove decoupling.
     path = _flat_path(start_q, n, 0.05)
 
-    ta = TAAdapter().project_horizon(
-        pacing_ta, start_q, n, cma=cma, public_equity_path=path
-    )
+    ta = TAAdapter().project_horizon(pacing_ta, start_q, n, cma=cma, public_equity_path=path)
     stairs = STAIRSAdapter().project_horizon(
         pacing_stairs, start_q, n, cma=cma, public_equity_path=path
     )
@@ -262,16 +254,14 @@ def test_stairs_engine_at_parity_yields_byte_stable_orchestrator_run(
             rr_ta.ledger["flow_type"].isin(["pe_call", "pe_distribution", "pe_nav_mark"])
         ].drop(columns=["run_id"])
         stairs_pe = rr_stairs.ledger[
-            rr_stairs.ledger["flow_type"].isin(
-                ["pe_call", "pe_distribution", "pe_nav_mark"]
-            )
+            rr_stairs.ledger["flow_type"].isin(["pe_call", "pe_distribution", "pe_nav_mark"])
         ].drop(columns=["run_id"])
-        ta_pe = ta_pe.sort_values(
-            ["quarter", "bucket", "flow_type", "source"]
-        ).reset_index(drop=True)
-        stairs_pe = stairs_pe.sort_values(
-            ["quarter", "bucket", "flow_type", "source"]
-        ).reset_index(drop=True)
+        ta_pe = ta_pe.sort_values(["quarter", "bucket", "flow_type", "source"]).reset_index(
+            drop=True
+        )
+        stairs_pe = stairs_pe.sort_values(["quarter", "bucket", "flow_type", "source"]).reset_index(
+            drop=True
+        )
         pd.testing.assert_frame_equal(ta_pe, stairs_pe, check_exact=False, atol=1e-9)
     finally:
         base_path.unlink(missing_ok=True)
@@ -311,9 +301,9 @@ def test_beta_amplification_under_drawdown(repo_root: Path):
     # Terminal NAV: last row per fund.
     term_zero = float(proj_zero.groupby("fund_name").tail(1)["nav_end_usd"].sum())
     term_high = float(proj_high.groupby("fund_name").tail(1)["nav_end_usd"].sum())
-    assert term_high < term_zero - 1.0, (
-        f"beta-amplification did not bite: zero={term_zero}, high={term_high}"
-    )
+    assert (
+        term_high < term_zero - 1.0
+    ), f"beta-amplification did not bite: zero={term_zero}, high={term_high}"
 
 
 def test_idiosyncratic_drift_monotonic_at_zero_beta(repo_root: Path):
@@ -327,12 +317,8 @@ def test_idiosyncratic_drift_monotonic_at_zero_beta(repo_root: Path):
     terminal: list[float] = []
     for drift in [0.05, 0.08, 0.10, 0.13]:
         pacing = _shipped_pacing_with_stairs(repo_root, drift=drift, beta=0.0)
-        proj = STAIRSAdapter().project_horizon(
-            pacing, start_q, n, cma=cma, public_equity_path=path
-        )
-        terminal.append(
-            float(proj.groupby("fund_name").tail(1)["nav_end_usd"].sum())
-        )
+        proj = STAIRSAdapter().project_horizon(pacing, start_q, n, cma=cma, public_equity_path=path)
+        terminal.append(float(proj.groupby("fund_name").tail(1)["nav_end_usd"].sum()))
     # Strictly increasing.
     for prev, nxt in zip(terminal, terminal[1:], strict=False):
         assert nxt > prev + 1e-6, f"non-monotonic in drift: {terminal}"
@@ -349,12 +335,8 @@ def test_beta_zero_decouples_from_public_equity(repo_root: Path):
     path_b = _flat_path(start_q, n, 0.20)
 
     pacing = _shipped_pacing_with_stairs(repo_root, drift=drift, beta=0.0)
-    proj_a = STAIRSAdapter().project_horizon(
-        pacing, start_q, n, cma=cma, public_equity_path=path_a
-    )
-    proj_b = STAIRSAdapter().project_horizon(
-        pacing, start_q, n, cma=cma, public_equity_path=path_b
-    )
+    proj_a = STAIRSAdapter().project_horizon(pacing, start_q, n, cma=cma, public_equity_path=path_a)
+    proj_b = STAIRSAdapter().project_horizon(pacing, start_q, n, cma=cma, public_equity_path=path_b)
     pd.testing.assert_frame_equal(
         proj_a.sort_values(["fund_name", "quarter_index"]).reset_index(drop=True),
         proj_b.sort_values(["fund_name", "quarter_index"]).reset_index(drop=True),
@@ -434,14 +416,11 @@ def test_growth_clip_activates_under_extreme_drawdown(repo_root: Path):
     pacing = _shipped_pacing_with_stairs(repo_root, drift=drift, beta=2.5)
 
     adapter = STAIRSAdapter()
-    proj = adapter.project_horizon(
-        pacing, start_q, n, cma=cma, public_equity_path=path
-    )
+    proj = adapter.project_horizon(pacing, start_q, n, cma=cma, public_equity_path=path)
 
     # NAV must stay non-negative across the projection.
     assert (proj["nav_end_usd"] >= -1e-6).all(), (
-        f"NAV went negative despite clip; min = "
-        f"{float(proj['nav_end_usd'].min())}"
+        f"NAV went negative despite clip; min = " f"{float(proj['nav_end_usd'].min())}"
     )
     # Clip activated at least once.
     diag = adapter.diagnostics()

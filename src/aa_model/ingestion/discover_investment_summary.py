@@ -30,7 +30,6 @@ content. ``--dry-run`` prints aggregate structural diagnostics only.
 from __future__ import annotations
 
 import argparse
-import sys
 from pathlib import Path
 
 from aa_model.ingestion.discovery_position import (
@@ -38,7 +37,6 @@ from aa_model.ingestion.discovery_position import (
     discover_investment_summary,
     render_position_diagnostics,
 )
-
 
 _LOCAL_PRIVATE_PATH_HINTS: tuple[str, ...] = (
     "_local.yaml",

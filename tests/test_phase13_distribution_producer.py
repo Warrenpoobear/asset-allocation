@@ -47,7 +47,6 @@ from aa_model.io.schemas import (
 from aa_model.producers.distribution import (
     ConfigDrivenProducer,
     DistributionProducerDiagnostics,
-    DistributionProducerDiagnosticsDelta,
     make_distribution_producer,
 )
 from pydantic import ValidationError
@@ -154,7 +153,9 @@ def test_domain_recurrence_sanity():
     # development / land + one_time validate.
     for domain in ("development", "land"):
         entry = _entry(
-            producer_id=f"p_{domain}_one_time", domain=domain, recurrence_type="one_time",
+            producer_id=f"p_{domain}_one_time",
+            domain=domain,
+            recurrence_type="one_time",
         )
         assert entry.domain == domain
 
@@ -164,11 +165,13 @@ def test_domain_recurrence_sanity():
 
 def test_emit_for_quarter_canonical_source_format():
     """Phase 13 #5: source format is exactly distribution:<domain>:<id>."""
-    cfg = DistributionProducerConfig(entries=[
-        _entry(producer_id="p1", domain="real_estate", entity_id="bldg_a", quarter="2026Q1"),
-        _entry(producer_id="p2", domain="opco", entity_id="liv_holding", quarter="2026Q1"),
-        _entry(producer_id="p3", domain="portfolio", entity_id="dividends", quarter="2026Q2"),
-    ])
+    cfg = DistributionProducerConfig(
+        entries=[
+            _entry(producer_id="p1", domain="real_estate", entity_id="bldg_a", quarter="2026Q1"),
+            _entry(producer_id="p2", domain="opco", entity_id="liv_holding", quarter="2026Q1"),
+            _entry(producer_id="p3", domain="portfolio", entity_id="dividends", quarter="2026Q2"),
+        ]
+    )
     p = ConfigDrivenProducer(cfg)
     emissions, _ = p.emit_for_quarter(_q("2026Q1"))
     sources = sorted(e.source for e in emissions)
@@ -180,11 +183,13 @@ def test_emit_for_quarter_canonical_source_format():
 
 def test_restricted_filters_at_emit():
     """Phase 13 #6: restricted=True excluded; counted in diagnostics."""
-    cfg = DistributionProducerConfig(entries=[
-        _entry(producer_id="p1", amount_usd=100_000.0),
-        _entry(producer_id="p2", amount_usd=200_000.0, restricted=True),
-        _entry(producer_id="p3", amount_usd=50_000.0),
-    ])
+    cfg = DistributionProducerConfig(
+        entries=[
+            _entry(producer_id="p1", amount_usd=100_000.0),
+            _entry(producer_id="p2", amount_usd=200_000.0, restricted=True),
+            _entry(producer_id="p3", amount_usd=50_000.0),
+        ]
+    )
     p = ConfigDrivenProducer(cfg)
     emissions, delta = p.emit_for_quarter(_q("2026Q1"))
     assert len(emissions) == 2
@@ -196,25 +201,29 @@ def test_restricted_filters_at_emit():
 
 def test_asset_id_vs_entity_id_precedence_in_source():
     """Phase 13 #7: asset_id wins when set; falls back to entity_id."""
-    cfg = DistributionProducerConfig(entries=[
-        _entry(producer_id="p1", entity_id="bldg_complex", asset_id="bldg_a"),
-        _entry(producer_id="p2", entity_id="bldg_complex", asset_id=None),
-    ])
+    cfg = DistributionProducerConfig(
+        entries=[
+            _entry(producer_id="p1", entity_id="bldg_complex", asset_id="bldg_a"),
+            _entry(producer_id="p2", entity_id="bldg_complex", asset_id=None),
+        ]
+    )
     p = ConfigDrivenProducer(cfg)
     emissions, _ = p.emit_for_quarter(_q("2026Q1"))
     sources = sorted(e.source for e in emissions)
     assert sources == [
-        "distribution:real_estate:bldg_a",      # uses asset_id
+        "distribution:real_estate:bldg_a",  # uses asset_id
         "distribution:real_estate:bldg_complex",  # falls back to entity_id
     ]
 
 
 def test_emit_for_quarter_purity():
     """Phase 13 #8: emit_for_quarter is idempotent; no module state."""
-    cfg = DistributionProducerConfig(entries=[
-        _entry(producer_id="p1"),
-        _entry(producer_id="p2", restricted=True),
-    ])
+    cfg = DistributionProducerConfig(
+        entries=[
+            _entry(producer_id="p1"),
+            _entry(producer_id="p2", restricted=True),
+        ]
+    )
     p = ConfigDrivenProducer(cfg)
     a, da = p.emit_for_quarter(_q("2026Q1"))
     b, db = p.emit_for_quarter(_q("2026Q1"))
@@ -227,26 +236,28 @@ def test_duplicate_source_quarter_allowed_when_producer_id_unique():
     """Phase 13 #9 (reviewer tightening 2): two entries with the same
     (domain, entity_id, asset_id, quarter) but distinct producer_id
     both emit. Sums add into the by-source rollup."""
-    cfg = DistributionProducerConfig(entries=[
-        # Same building, same quarter, same domain — recurring rent
-        # PLUS one-time refi proceeds. Different producer_ids.
-        _entry(
-            producer_id="bldg_a_recurring_2026Q1",
-            domain="real_estate",
-            entity_id="bldg_complex",
-            asset_id="bldg_a",
-            amount_usd=200_000.0,
-            recurrence_type="recurring",
-        ),
-        _entry(
-            producer_id="bldg_a_refi_2026Q1",
-            domain="real_estate",
-            entity_id="bldg_complex",
-            asset_id="bldg_a",
-            amount_usd=1_500_000.0,
-            recurrence_type="one_time",
-        ),
-    ])
+    cfg = DistributionProducerConfig(
+        entries=[
+            # Same building, same quarter, same domain — recurring rent
+            # PLUS one-time refi proceeds. Different producer_ids.
+            _entry(
+                producer_id="bldg_a_recurring_2026Q1",
+                domain="real_estate",
+                entity_id="bldg_complex",
+                asset_id="bldg_a",
+                amount_usd=200_000.0,
+                recurrence_type="recurring",
+            ),
+            _entry(
+                producer_id="bldg_a_refi_2026Q1",
+                domain="real_estate",
+                entity_id="bldg_complex",
+                asset_id="bldg_a",
+                amount_usd=1_500_000.0,
+                recurrence_type="one_time",
+            ),
+        ]
+    )
     p = ConfigDrivenProducer(cfg)
     emissions, delta = p.emit_for_quarter(_q("2026Q1"))
     # Both emit.
@@ -255,7 +266,8 @@ def test_duplicate_source_quarter_allowed_when_producer_id_unique():
     assert all(e.source == "distribution:real_estate:bldg_a" for e in emissions)
     # producer_id distinguishes the audit trail.
     assert {e.producer_id for e in emissions} == {
-        "bldg_a_recurring_2026Q1", "bldg_a_refi_2026Q1",
+        "bldg_a_recurring_2026Q1",
+        "bldg_a_refi_2026Q1",
     }
     # By-source rollup sums them.
     assert delta.emitted_by_source_usd["distribution:real_estate:bldg_a"] == pytest.approx(
@@ -312,13 +324,15 @@ def test_owl_distributable_income_runs_with_producer_feed():
     entries = []
     for i in range(8):
         q_str = str(start_q + i)
-        entries.append(_entry(
-            producer_id=f"bldg_a_{q_str}",
-            domain="real_estate",
-            entity_id="bldg_a",
-            quarter=q_str,
-            amount_usd=1_000_000.0,
-        ))
+        entries.append(
+            _entry(
+                producer_id=f"bldg_a_{q_str}",
+                domain="real_estate",
+                entity_id="bldg_a",
+                quarter=q_str,
+                amount_usd=1_000_000.0,
+            )
+        )
     prod_cfg = DistributionProducerConfig(entries=entries)
     producer = ConfigDrivenProducer(prod_cfg)
     diag_acc = DistributionProducerDiagnostics()
@@ -326,7 +340,9 @@ def test_owl_distributable_income_runs_with_producer_feed():
     rule = OwlRule()
     L = QuarterlyLedger("t", initial_nav={"cash": 100_000_000.0}, start_quarter=start_q)
     params = SpendingParams(
-        config=spend_cfg, start_quarter=start_q, num_quarters=8,
+        config=spend_cfg,
+        start_quarter=start_q,
+        num_quarters=8,
     )
     # Simulate the orchestrator's per-quarter loop.
     for i in range(8):
@@ -337,14 +353,20 @@ def test_owl_distributable_income_runs_with_producer_feed():
         emissions, delta = producer.emit_for_quarter(q)
         for em in emissions:
             L.add(
-                quarter=q, bucket="cash", flow_type="distribution_inflow",
-                amount_usd=em.amount_usd, source=em.source,
+                quarter=q,
+                bucket="cash",
+                flow_type="distribution_inflow",
+                amount_usd=em.amount_usd,
+                source=em.source,
             )
         diag_acc.merge(delta)
         # Spend row.
         L.add(
-            quarter=q, bucket="cash", flow_type="spend",
-            amount_usd=-spend_amt, source=rule.SOURCE_ID,
+            quarter=q,
+            bucket="cash",
+            flow_type="spend",
+            amount_usd=-spend_amt,
+            source=rule.SOURCE_ID,
         )
 
     # Realized window at q4 = q0..q3 sum = 4 * $1M = $4M. Bootstrap was
@@ -396,25 +418,29 @@ def test_report_renders_distribution_producer_advisory(tmp_path, repo_root):
         },
         emitted_by_recurrence_usd={
             "recurring": 3_000_000.0,
-            "one_time": 2_000_000.0,    # 40% — warning band
+            "one_time": 2_000_000.0,  # 40% — warning band
         },
         emitted_by_confidence_usd={
             "contractual": 3_500_000.0,
-            "forecast": 1_000_000.0,    # 20%
-            "scenario": 500_000.0,      # 10%  → forecast+scenario = 30%
+            "forecast": 1_000_000.0,  # 20%
+            "scenario": 500_000.0,  # 10%  → forecast+scenario = 30%
         },
         excluded_restricted_count=2,
         excluded_restricted_usd=350_000.0,
     )
     L = QuarterlyLedger(
         "test_p13",
-        initial_nav={b: 25_000_000.0 for b in ("cash", "public_bond", "public_equity", "pe_buyout")},
+        initial_nav={
+            b: 25_000_000.0 for b in ("cash", "public_bond", "public_equity", "pe_buyout")
+        },
         start_quarter=_q("2026Q1"),
     )
     L.finalize()
     out = tmp_path / "report.md"
     write_markdown_report(
-        out, cfg=cfg, ledger=L,
+        out,
+        cfg=cfg,
+        ledger=L,
         run_id="test_phase13",
         config_hash="0" * 12,
         fixtures_hash="0" * 12,
@@ -463,8 +489,10 @@ def test_report_composes_phase13_with_phase125_advisory(tmp_path, repo_root):
         floor_usd=0.0,
         ceiling_usd=1.0e12,
         guardrail=GuardrailConfig(
-            upper_band_pct=0.20, lower_band_pct=0.20,
-            raise_pct=0.10, cut_pct=0.10,
+            upper_band_pct=0.20,
+            lower_band_pct=0.20,
+            raise_pct=0.10,
+            cut_pct=0.10,
             spending_base="distributable_income",
             distribution_window_quarters=4,
             bootstrap_distributable_income_usd=4_000_000.0,
@@ -506,13 +534,17 @@ def test_report_composes_phase13_with_phase125_advisory(tmp_path, repo_root):
     )
     L = QuarterlyLedger(
         "test_p13_compose",
-        initial_nav={b: 25_000_000.0 for b in ("cash", "public_bond", "public_equity", "pe_buyout")},
+        initial_nav={
+            b: 25_000_000.0 for b in ("cash", "public_bond", "public_equity", "pe_buyout")
+        },
         start_quarter=_q("2026Q1"),
     )
     L.finalize()
     out = tmp_path / "report.md"
     write_markdown_report(
-        out, cfg=cfg, ledger=L,
+        out,
+        cfg=cfg,
+        ledger=L,
         run_id="test_phase13_compose",
         config_hash="0" * 12,
         fixtures_hash="0" * 12,

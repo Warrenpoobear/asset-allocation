@@ -11,12 +11,8 @@ from pathlib import Path
 
 import pytest
 from aa_model.ingestion.discovery import (
-    DraftManifestResult,
-    SheetDiscovery,
-    WorkbookDiscoveryResult,
     build_draft_manifest,
     discover_workbook,
-    render_aggregate_diagnostics,
 )
 from aa_model.ingestion.schemas import WorkbookManifestConfig
 
@@ -44,31 +40,34 @@ def test_row4_qyyyy_discovery(tmp_path):
     detected_format_majority='q_yyyy', header_row_majority=4,
     sheets bucketed properly."""
     wb_path = tmp_path / "synthetic_v7.xlsx"
-    _build_synthetic_workbook(wb_path, sheets={
-        "Summary": [
-            ["Roll-up", "2025Q1", "2025Q2", "2025Q3", "2025Q4"],
-            ["Total", 100, 100, 100, 100],
-        ],
-        # An entity sheet with v7-shaped row-4 q_yyyy headers.
-        "EntityA": [
-            ["Cash Flow Forecast", None, None, None, None],
-            [None, None, None, None, None],
-            [None, "FY2025", None, None, None],
-            ["Item", "Q1 2025", "Q2 2025", "Q3 2025", "Q4 2025"],
-            ["Rent",       100, 100, 100, 100],
-            ["Tax",        -10, -10, -10, -10],
-            ["Distributions", 50, 50, 50, 50],
-        ],
-        "EntityB": [
-            ["Title", None, None, None, None],
-            [None, None, None, None, None],
-            [None, "FY2025", None, None, None],
-            ["Item", "Q1 2025", "Q2 2025", "Q3 2025", "Q4 2025"],
-            ["Income",     200, 200, 200, 200],
-            ["Expense",    -50, -50, -50, -50],
-            ["Net distributable", 150, 150, 150, 150],
-        ],
-    })
+    _build_synthetic_workbook(
+        wb_path,
+        sheets={
+            "Summary": [
+                ["Roll-up", "2025Q1", "2025Q2", "2025Q3", "2025Q4"],
+                ["Total", 100, 100, 100, 100],
+            ],
+            # An entity sheet with v7-shaped row-4 q_yyyy headers.
+            "EntityA": [
+                ["Cash Flow Forecast", None, None, None, None],
+                [None, None, None, None, None],
+                [None, "FY2025", None, None, None],
+                ["Item", "Q1 2025", "Q2 2025", "Q3 2025", "Q4 2025"],
+                ["Rent", 100, 100, 100, 100],
+                ["Tax", -10, -10, -10, -10],
+                ["Distributions", 50, 50, 50, 50],
+            ],
+            "EntityB": [
+                ["Title", None, None, None, None],
+                [None, None, None, None, None],
+                [None, "FY2025", None, None, None],
+                ["Item", "Q1 2025", "Q2 2025", "Q3 2025", "Q4 2025"],
+                ["Income", 200, 200, 200, 200],
+                ["Expense", -50, -50, -50, -50],
+                ["Net distributable", 150, 150, 150, 150],
+            ],
+        },
+    )
     discovery = discover_workbook(wb_path)
     assert discovery.total_sheets == 3
     # Two of the three sheets have parseable headers under q_yyyy at row 4.
@@ -90,17 +89,20 @@ def test_display_only_detection(tmp_path):
     classified as display_only (or unknown layout). It still gets a
     role from the keyword classifier."""
     wb_path = tmp_path / "synthetic.xlsx"
-    _build_synthetic_workbook(wb_path, sheets={
-        "Ownership": [
-            ["Org structure"],
-        ],
-        "EntityA": [
-            ["Item", "Q1 2025", "Q2 2025", "Q3 2025", "Q4 2025"],
-            ["Rent",       100, 100, 100, 100],
-            ["Distributions", 50, 50, 50, 50],
-            ["Tax",        -10, -10, -10, -10],
-        ],
-    })
+    _build_synthetic_workbook(
+        wb_path,
+        sheets={
+            "Ownership": [
+                ["Org structure"],
+            ],
+            "EntityA": [
+                ["Item", "Q1 2025", "Q2 2025", "Q3 2025", "Q4 2025"],
+                ["Rent", 100, 100, 100, 100],
+                ["Distributions", 50, 50, 50, 50],
+                ["Tax", -10, -10, -10, -10],
+            ],
+        },
+    )
     discovery = discover_workbook(wb_path)
     ownership = next(s for s in discovery.sheets if s.sheet_name_raw == "Ownership")
     assert ownership.role == "ownership_structure"
@@ -117,24 +119,27 @@ def test_draft_manifest_validates(tmp_path):
     validates cleanly (sheet-name uniqueness, entity_id uniqueness,
     URL-safe workbook_version)."""
     wb_path = tmp_path / "synthetic_v7.xlsx"
-    _build_synthetic_workbook(wb_path, sheets={
-        "Summary": [
-            ["Item", "Q1 2025", "Q2 2025"],
-            ["Total", 100, 100],
-        ],
-        "EntityA": [
-            ["Item", "Q1 2025", "Q2 2025", "Q3 2025", "Q4 2025"],
-            ["Rent",       100, 100, 100, 100],
-            ["Distributions", 50, 50, 50, 50],
-            ["Tax",        -10, -10, -10, -10],
-        ],
-        "EntityB": [
-            ["Item", "Q1 2025", "Q2 2025", "Q3 2025", "Q4 2025"],
-            ["Income",     200, 200, 200, 200],
-            ["Distributions", 75, 75, 75, 75],
-            ["Expense",    -50, -50, -50, -50],
-        ],
-    })
+    _build_synthetic_workbook(
+        wb_path,
+        sheets={
+            "Summary": [
+                ["Item", "Q1 2025", "Q2 2025"],
+                ["Total", 100, 100],
+            ],
+            "EntityA": [
+                ["Item", "Q1 2025", "Q2 2025", "Q3 2025", "Q4 2025"],
+                ["Rent", 100, 100, 100, 100],
+                ["Distributions", 50, 50, 50, 50],
+                ["Tax", -10, -10, -10, -10],
+            ],
+            "EntityB": [
+                ["Item", "Q1 2025", "Q2 2025", "Q3 2025", "Q4 2025"],
+                ["Income", 200, 200, 200, 200],
+                ["Distributions", 75, 75, 75, 75],
+                ["Expense", -50, -50, -50, -50],
+            ],
+        },
+    )
     discovery = discover_workbook(wb_path)
     draft = build_draft_manifest(discovery, mode="local_private", workbook_version="v_test")
     assert isinstance(draft.manifest, WorkbookManifestConfig)
@@ -159,31 +164,34 @@ def test_privacy_safe_redacts_non_structural(tmp_path):
     placeholder slots; structural sheet names (Summary, board,
     Ownership) are preserved literal."""
     wb_path = tmp_path / "synthetic.xlsx"
-    _build_synthetic_workbook(wb_path, sheets={
-        "Summary": [
-            ["Item", "Q1 2025", "Q2 2025", "Q3 2025", "Q4 2025"],
-            ["Total", 100, 100, 100, 100],
-        ],
-        "September 25 Board": [
-            ["Title"],
-        ],
-        "Ownership": [
-            ["Tree"],
-        ],
-        # Non-structural sheet names — should be redacted.
-        "SJB LLC": [
-            ["Item", "Q1 2025", "Q2 2025", "Q3 2025", "Q4 2025"],
-            ["Rent",       100, 100, 100, 100],
-            ["Tax",        -10, -10, -10, -10],
-            ["Net",         90,  90,  90,  90],
-        ],
-        "AB Trust": [
-            ["Item", "Q1 2025", "Q2 2025", "Q3 2025", "Q4 2025"],
-            ["Distribution", 50, 50, 50, 50],
-            ["Fee",         -5, -5, -5, -5],
-            ["Net",         45, 45, 45, 45],
-        ],
-    })
+    _build_synthetic_workbook(
+        wb_path,
+        sheets={
+            "Summary": [
+                ["Item", "Q1 2025", "Q2 2025", "Q3 2025", "Q4 2025"],
+                ["Total", 100, 100, 100, 100],
+            ],
+            "September 25 Board": [
+                ["Title"],
+            ],
+            "Ownership": [
+                ["Tree"],
+            ],
+            # Non-structural sheet names — should be redacted.
+            "SJB LLC": [
+                ["Item", "Q1 2025", "Q2 2025", "Q3 2025", "Q4 2025"],
+                ["Rent", 100, 100, 100, 100],
+                ["Tax", -10, -10, -10, -10],
+                ["Net", 90, 90, 90, 90],
+            ],
+            "AB Trust": [
+                ["Item", "Q1 2025", "Q2 2025", "Q3 2025", "Q4 2025"],
+                ["Distribution", 50, 50, 50, 50],
+                ["Fee", -5, -5, -5, -5],
+                ["Net", 45, 45, 45, 45],
+            ],
+        },
+    )
     discovery = discover_workbook(wb_path)
     draft_safe = build_draft_manifest(discovery, mode="privacy_safe")
     draft_priv = build_draft_manifest(discovery, mode="local_private")
@@ -245,10 +253,10 @@ def test_majority_format_and_header_detection(tmp_path):
             [None, None, None, None, None],
             [None, "FY2025", None, None, None],
             ["Item", "Q1 2025", "Q2 2025", "Q3 2025", "Q4 2025"],
-            ["Inflow",      100, 100, 100, 100],
+            ["Inflow", 100, 100, 100, 100],
             ["Distributions", 50, 50, 50, 50],
-            ["Outflow",     -10, -10, -10, -10],
-            ["Net",          90,  90,  90,  90],
+            ["Outflow", -10, -10, -10, -10],
+            ["Net", 90, 90, 90, 90],
         ]
     _build_synthetic_workbook(wb_path, sheets=sheets)
     discovery = discover_workbook(wb_path)
@@ -269,23 +277,30 @@ def test_cli_dry_run_no_yaml(tmp_path, capsys):
     from aa_model.ingestion.discover_workbook import main
 
     wb_path = tmp_path / "synthetic.xlsx"
-    _build_synthetic_workbook(wb_path, sheets={
-        "Summary": [
-            ["Item", "Q1 2025"],
-            ["Total", 100],
-        ],
-        "EntityA": [
-            ["Item", "Q1 2025", "Q2 2025", "Q3 2025", "Q4 2025"],
-            ["Rent",       100, 100, 100, 100],
-            ["Distributions", 50, 50, 50, 50],
-            ["Tax",        -10, -10, -10, -10],
-        ],
-    })
-    rc = main([
-        "--workbook", str(wb_path),
-        "--dry-run",
-        "--mode", "privacy_safe",
-    ])
+    _build_synthetic_workbook(
+        wb_path,
+        sheets={
+            "Summary": [
+                ["Item", "Q1 2025"],
+                ["Total", 100],
+            ],
+            "EntityA": [
+                ["Item", "Q1 2025", "Q2 2025", "Q3 2025", "Q4 2025"],
+                ["Rent", 100, 100, 100, 100],
+                ["Distributions", 50, 50, 50, 50],
+                ["Tax", -10, -10, -10, -10],
+            ],
+        },
+    )
+    rc = main(
+        [
+            "--workbook",
+            str(wb_path),
+            "--dry-run",
+            "--mode",
+            "privacy_safe",
+        ]
+    )
     assert rc == 0
     captured = capsys.readouterr()
     assert "WORKBOOK DISCOVERY" in captured.out
@@ -310,32 +325,42 @@ def test_phase14_2_does_not_change_phase14_ingestion(tmp_path):
     from aa_model.ingestion.workbook import ingest_workbook
 
     wb_path = tmp_path / "synthetic.xlsx"
-    _build_synthetic_workbook(wb_path, sheets={
-        "EntityA": [
-            ["Item", "2026Q1", "2026Q2", "2026Q3", "2026Q4"],
-            ["Rent collected", 100_000, 100_000, 100_000, 100_000],
-            ["Tax payment",    -10_000, -10_000, -10_000, -10_000],
-        ],
-    })
+    _build_synthetic_workbook(
+        wb_path,
+        sheets={
+            "EntityA": [
+                ["Item", "2026Q1", "2026Q2", "2026Q3", "2026Q4"],
+                ["Rent collected", 100_000, 100_000, 100_000, 100_000],
+                ["Tax payment", -10_000, -10_000, -10_000, -10_000],
+            ],
+        },
+    )
     manifest = WorkbookManifestConfig(
         workbook_version="v1",
         expected_workbook_filename="synthetic.xlsx",
         entity_sheets=[
             EntitySheetSpec(
-                sheet_name="EntityA", entity_id="entity_a",
-                entity_type="operating_llc", display_name="A",
+                sheet_name="EntityA",
+                entity_id="entity_a",
+                entity_type="operating_llc",
+                display_name="A",
                 cash_flow_role="operating",
                 row_classification_rules=[
                     RowClassificationRule(
                         row_label_pattern="rent collected",
-                        direction="inflow", category="rent", domain="real_estate",
-                        distributable_candidate=True, recurrence_type="recurring",
+                        direction="inflow",
+                        category="rent",
+                        domain="real_estate",
+                        distributable_candidate=True,
+                        recurrence_type="recurring",
                         certainty="contractual",
                     ),
                     RowClassificationRule(
                         row_label_pattern="tax payment",
-                        direction="outflow", category="tax",
-                        recurrence_type="recurring", certainty="contractual",
+                        direction="outflow",
+                        category="tax",
+                        recurrence_type="recurring",
+                        certainty="contractual",
                     ),
                 ],
             ),
