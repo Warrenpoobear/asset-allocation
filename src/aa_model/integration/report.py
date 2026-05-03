@@ -1141,14 +1141,11 @@ def write_markdown_report(
             for q_str in sorted(d19.calls_by_quarter.keys()):
                 lines.append(f"    {q_str}: ${d19.calls_by_quarter[q_str]:,.0f}")
         if d19.top_contributors:
-            lines.append(f"  top contributors (fund, next-12m call):")
+            lines.append("  top contributors (fund, next-12m call):")
             for fund_name, amt in d19.top_contributors:
                 lines.append(f"    {fund_name}: ${amt:,.0f}")
         if d19.advisories:
-            lines.append(
-                f"  ADVISORIES ({len(d19.advisories)}): "
-                + "; ".join(d19.advisories)
-            )
+            lines.append(f"  ADVISORIES ({len(d19.advisories)}): " + "; ".join(d19.advisories))
         lines.append("")
         lines.append(
             "_PE calls are derived from deterministic forward-pacing "

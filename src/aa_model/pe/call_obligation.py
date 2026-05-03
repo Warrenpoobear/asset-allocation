@@ -35,11 +35,11 @@ class PECallObligationBridgeDiagnostics:
     """
 
     next_12m_capital_calls_usd: float | None
-    source: str                      # "explicit" | "pe_pacing" | "unavailable"
-    coverage_quarter: str            # str(pd.Period) — the measurement point
-    quarters_included: list[str]     # next-4-quarter window queried
-    quarters_in_horizon: list[str]   # subset that appeared in pe_proj
-    fund_count: int                  # funds with call_usd > 0 in window
+    source: str  # "explicit" | "pe_pacing" | "unavailable"
+    coverage_quarter: str  # str(pd.Period) — the measurement point
+    quarters_included: list[str]  # next-4-quarter window queried
+    quarters_in_horizon: list[str]  # subset that appeared in pe_proj
+    fund_count: int  # funds with call_usd > 0 in window
     calls_by_quarter: dict[str, float]
     top_contributors: list[tuple[str, float]]  # (fund_name, sum_call_usd), top 5 desc
     advisories: list[str] = field(default_factory=list)
@@ -73,8 +73,7 @@ def derive_pe_capital_call_obligation(
 
     if pe_proj.empty:
         advisories.append(
-            "PE pacing produced no projections — "
-            "next_12m_capital_calls_usd unavailable (T4)"
+            "PE pacing produced no projections — " "next_12m_capital_calls_usd unavailable (T4)"
         )
         return PECallObligationBridgeDiagnostics(
             next_12m_capital_calls_usd=None,
@@ -107,15 +106,9 @@ def derive_pe_capital_call_obligation(
                 calls_by_quarter[str(q_val)] = total
 
     if not in_window.empty:
-        fund_totals = (
-            in_window.groupby("fund_name")["call_usd"]
-            .sum()
-            .sort_values(ascending=False)
-        )
+        fund_totals = in_window.groupby("fund_name")["call_usd"].sum().sort_values(ascending=False)
         top_contributors = [
-            (str(name), float(val))
-            for name, val in fund_totals.head(5).items()
-            if float(val) > 0.0
+            (str(name), float(val)) for name, val in fund_totals.head(5).items() if float(val) > 0.0
         ]
     else:
         top_contributors = []

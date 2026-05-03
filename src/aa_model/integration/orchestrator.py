@@ -165,7 +165,7 @@ def _build_ledger(
     dict | None,
     DistributionProducerDiagnostics | None,
     object | None,  # WorkbookIngestionResult | None — typed loosely to keep
-                    # io/schemas clean of an ingestion dependency.
+    # io/schemas clean of an ingestion dependency.
     object | None,  # PositionIngestionResult | None
     object | None,  # LiquidityCoverageResult | None
     object | None,  # PECallObligationBridgeDiagnostics | None — Phase 19
@@ -522,9 +522,7 @@ def _build_ledger(
         )
 
         coverage_q = pd.Period(position_manifest.as_of_date, freq="Q-DEC")
-        user_explicit_calls = (cfg.liquidity_obligations or {}).get(
-            "next_12m_capital_calls_usd"
-        )
+        user_explicit_calls = (cfg.liquidity_obligations or {}).get("next_12m_capital_calls_usd")
         if user_explicit_calls is not None:
             _window = [str(coverage_q + i) for i in range(1, 5)]
             pe_call_bridge_diag = PECallObligationBridgeDiagnostics(
@@ -540,9 +538,7 @@ def _build_ledger(
             )
             pe_call_obligation_usd: float | None = float(user_explicit_calls)
         else:
-            pe_call_bridge_diag = derive_pe_capital_call_obligation(
-                pe_proj, coverage_q
-            )
+            pe_call_bridge_diag = derive_pe_capital_call_obligation(pe_proj, coverage_q)
             pe_call_obligation_usd = pe_call_bridge_diag.next_12m_capital_calls_usd
 
         liquidity_coverage_result = _run_liquidity_coverage(

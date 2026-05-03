@@ -18,13 +18,10 @@ import datetime
 
 import pandas as pd
 import pytest
-
 from aa_model.pe.call_obligation import (
-    PECallObligationBridgeDiagnostics,
     derive_pe_capital_call_obligation,
 )
 from aa_model.pe.ta_model import PROJECTION_COLUMNS
-
 
 # ---- shared synthetic helpers -----------------------------------------------
 
@@ -76,13 +73,13 @@ def _load_base_cfg():
 
 def test_explicit_override_preserved():
     """Phase 19 #1: explicit next_12m_capital_calls_usd overrides PE-derived value."""
-    from aa_model.integration.orchestrator import _run_liquidity_coverage
     from aa_model.ingestion.schemas_position import (
         PositionIngestionDiagnostics,
         PositionIngestionResult,
         PositionManifestConfig,
         PositionRecord,
     )
+    from aa_model.integration.orchestrator import _run_liquidity_coverage
 
     # Build a minimal position ingestion result and manifest
     pos = PositionRecord(
@@ -123,7 +120,9 @@ def test_explicit_override_preserved():
 
     # PE-derived value would be 0 if pe_proj is empty, but user value wins
     result = _run_liquidity_coverage(
-        pir, manifest, cfg,
+        pir,
+        manifest,
+        cfg,
         pe_call_obligation_usd=75_000.0,  # resolved explicit value passed in
     )
     # capital_call_coverage = liquid_nav / next_12m_capital_calls_usd = 500k / 75k
