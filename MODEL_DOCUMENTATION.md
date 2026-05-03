@@ -11746,3 +11746,143 @@ On gate pass:
   of their contributions section; those are acceptable at L19 if their
   `distributable_candidate` and `restricted` profile is confirmed correct.
 - The 2 `display_only` entity sheets require no rules.
+
+---
+
+## PE pacing model — design constraints (2026-05-03)
+
+**Status: design-lock (pre-implementation)**
+
+### Governing principle
+
+The pacing model must stay **reconciled to the cash-flow worksheet** rather
+than becoming a parallel forecast. The worksheet is the spine. Pacing
+provides projection and cross-check; it does not override the worksheet
+when the worksheet has data.
+
+This is already the Phase 19–21 architecture: workbook capital-call lines
+drive the obligation when available (`source_used="cashflow_workbook"`),
+PE pacing is the reconciliation cross-check, and policy gates handle
+material deltas. The design below extends that architecture into a full
+three-layer input model.
+
+### Hard boundary (load-bearing)
+
+```
+Do not estimate next-12m calls as unfunded × arbitrary percentage.
+Use either:
+  - cash-flow worksheet classified capital-call lines (primary, when available), or
+  - deterministic PE pacing projection (cross-check and gap-fill).
+```
+
+The current Phase 19 stub (T4 path: returns `None` when no PE projection
+supplied) is correct behavior — it does not fall back to an arbitrary
+heuristic. Any future implementation must preserve this: no projection
+without explicit fund-level assumptions.
+
+### Three-layer input model
+
+**Layer 1 — Fund / commitment data** (local/private table, never committed)
+
+Per fund or commitment:
+
+```
+fund_id / manager_id
+vintage_year
+strategy / sleeve
+commitment_usd
+called_to_date_usd
+distributed_to_date_usd
+current_nav_usd
+unfunded_commitment_usd
+inception_date
+expected_remaining_life
+fund_status: active | harvesting | wind-down | fully_called
+```
+
+This is the minimum needed to project future calls, future distributions,
+NAV roll-forward, and unfunded burn-down.
+
+**Layer 2 — Pacing assumptions** (per fund or fund type)
+
+```
+call_schedule / commitment_period
+expected_annual_call_rate
+distribution_curve
+nav_growth_assumption
+recycling_assumption (if any)
+terminal_wind_down_period
+```
+
+At first implementation these should be deterministic curves.
+Monte Carlo remains deferred.
+
+**Layer 3 — Worksheet reconciliation surface**
+
+The pacing model must expose a reconciliation surface that answers:
+
+```
+What does the worksheet forecast?        (cash-flow workbook capital-call / distribution lines by quarter)
+What does the pacing model forecast?     (deterministic projection by same quarter)
+Which source drives liquidity coverage?  (source_used field)
+How large is the difference?             (delta by quarter, by fund/entity/source)
+Is the difference explainable?           (advisory classification: advisory | warning | blocking)
+```
+
+This maps directly to the existing `WorkbookCallReconciliationDiagnostics`
+schema (Phase 20/21). The pacing layer feeds `pe_bridge_diag`; the
+reconciliation layer already consumes it.
+
+### Practical fund table schema
+
+When fund-level data is available, the local/private input table should
+carry:
+
+```
+fund_id
+manager_id
+entity_id                         (maps to workbook entity_sheet)
+sleeve
+vintage_year
+commitment_usd
+called_to_date_usd
+distributed_to_date_usd
+nav_usd
+unfunded_usd
+commitment_period_end
+expected_final_liquidation_date
+call_curve_type
+distribution_curve_type
+source: investment_summary | cashflow_workbook | manual_override
+confidence
+```
+
+This table is local/private (never committed). It is the input to
+`PEAdapter.project_horizon`; no schema changes are needed at the repo
+level to add it.
+
+### Current pacing implementation state
+
+Phase 19 ships `derive_pe_capital_call_obligation` and
+`PEAdapter.project_horizon`. The `TAAdapter` (trivial/stub) and
+`STAIRSAdapter` (schedule-driven) exist. The T4 path (`pe_proj` is None
+or empty) correctly returns `next_12m_capital_calls_usd=None` rather
+than applying a heuristic.
+
+No code changes are needed before L19 completes. The pacing model
+improvement is a future phase, contingent on:
+1. L19 RESOLVED (workbook row classification complete).
+2. Fund-level commitment data available in the local table.
+
+### What the pacing model should NOT require yet
+
+```
+Monte Carlo / stochastic projection
+Secondary-sale assumptions
+Fee-aware optimization
+Legal / tax interpretation
+Automatic distributability inference
+```
+
+For now: **deterministic, worksheet-reconciled, and advisory where
+assumptions are incomplete.**
