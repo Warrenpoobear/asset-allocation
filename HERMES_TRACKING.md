@@ -8,14 +8,18 @@
 
 ## Current State <!-- auto -->
 
-- Current phase: **Phase 11 — Owl scale-invariance (L16 resolved); scope-lock landed**
-- Latest commit: `69cae5c` — docs(scope): scope-lock — PROJECT_SCOPE.md + Wake Robin reference architecture
-- Branch: `main` (up-to-date with origin)
-- Last pushed: 2026-05-02 16:03 ET
-- Working tree: clean
-- Tests: **225 passed** (`.venv/bin/pytest -p no:warnings`)
-- Ruff: **22 errors** (17 auto-fixable) in `tests/` — non-blocking, lint debt
-- Latest run set: `data/processed/runs/aa-*-20260502T200342Z-*` (5 scenarios)
+- Current phase: **Phase 18 — SpendingBaseBreakdown bridge into liquidity coverage (Phase 19 PE call-obligation underway, untracked)**
+- Latest commit: `5acfd0a` — Phase 18 / L20: SpendingBaseBreakdown bridge into liquidity coverage
+- Local HEAD: `84f97a8` — chore(lint): ruff --fix + format sweep across src/tests/scripts
+  (1 commit ahead of `origin/main`: lint sweep)
+- Branch: `main` (1 ahead, 0 behind origin)
+- Last pushed: 2026-05-03 12:06:34 -0400 (`5acfd0a`)
+- Working tree: dirty — concurrent Phase 19 work present (untracked: `src/aa_model/pe/call_obligation.py`,
+  `tests/test_phase19_pe_call_obligation.py`, `configs/_test_owl_infl*.yaml`)
+- Tests: **341 passed** (`.venv/bin/pytest -p no:warnings`; +6 from Phase 19)
+- Ruff: **4 errors** in Phase 19 untracked files only (`pe/call_obligation.py`,
+  `test_phase19_pe_call_obligation.py`); src/tests/scripts otherwise clean post-sweep at `84f97a8`
+- Latest run set: `data/processed/runs/aa-e3f09d2a2251-96451d89bace-20260503T163558Z-*`
 
 ## Open Gates
 
@@ -46,7 +50,7 @@
 | L12 | Non-fatal "convert cov to PSD" warning                         | 694      |
 | L14 | Only linear transaction cost is modeled (partial resolve)      | 984      |
 | L17 | Cross-engine metric comparability is not meaningful            | 839      |
-| L19 | Owl absolute-floor does NOT resolve spending-base realism      | (Ph11)   |
+| L19 | Spending-base realism — partial; pending real-workbook validation | 1376  |
 
 ## Resolved Limitations
 
@@ -106,15 +110,16 @@ Cron jobs are registered separately in Hermes (see `cronjob list`).
 
 ### Asset Allocation Model — Status
 ```
-Current phase:        Phase 11 (L16 resolved); scope-lock landed
-Last pushed commit:   69cae5c
-Tests:                225 passed
-Ruff errors:          22 (lint debt, tests/)
-Open limitations:     12  (incl. new L19)
-Resolved limitations: 7   (+L8, +L16)
-Next gated task:      Phase 7 STAIRS adapter implementation
-Last model-doc update: 2026-05-02
-Latest run:           20260502T200342Z (5 scenarios)
+Current phase:        Phase 18 (SpendingBase bridge); Phase 19 PE call-obligation in-flight (untracked)
+Last pushed commit:   5acfd0a  (Phase 18)
+Local HEAD:           84f97a8  (chore(lint) sweep, +1 ahead)
+Tests:                341 passed
+Ruff errors:          4 (Phase 19 untracked files only; src/tests/scripts clean)
+Open limitations:     12  (L19 → PARTIALLY RESOLVED)
+Resolved limitations: 7
+Next gated task:      Push Phase 14 series + L19 real-workbook validation
+Last model-doc update: 2026-05-03 (L19 status under Phase 14)
+Latest run:           20260503T045900Z (crisis_correlation)
 ```
 
 ### Governance Gates
