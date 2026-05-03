@@ -10668,3 +10668,132 @@ tests/test_phase17_study_integration.py   (synthetic fixtures only)
 * No PE pacing integration.
 * No semi-liquid redemption modeling.
 * No L19 / L20 full resolution.
+
+---
+
+## Phase 18 design-lock — SpendingBaseBreakdown bridge
+
+**Commit:** (Phase 18)
+**Status:** LOCKED
+
+### Problem
+
+Phase 17's ``_run_liquidity_coverage`` hardcodes ``spending_base=None``,
+leaving ``liquid_to_spending_base`` and
+``liquid_nav_to_annual_income_estimate`` always ``None`` in study runs even
+when the OwlRule has completed a year-boundary evaluation and has a realized
+``SpendingBaseBreakdown`` in its diagnostics dict.
+
+### Solution
+
+Two new private functions in ``orchestrator.py`` reconstruct a
+``SpendingBaseBreakdown`` object from the Owl diagnostics dict (no new
+accessor on OwlRule) and thread it through to
+``compute_liquidity_coverage`` via ``_run_liquidity_coverage``.
+
+### Reconstruction contract (no OwlRule accessor)
+
+``OwlRule.diagnostics()`` returns a plain ``dict`` keyed by strings. Phase 18
+reads the following fields:
+
+* ``engine``: must equal ``"OwlRule"`` — guard for non-Owl rules.
+* ``spending_base_mode``: ``None`` means total_nav (the default); string
+  values are the configured spending-base name.
+* ``spending_base_run_end_usd``: float, 0.0 when no year-boundary snapshot
+  exists yet.
+* ``excluded_nav_by_tier_usd``: ``dict[str, float]`` — NAV excluded by
+  liquidity tier.
+* ``excluded_nav_by_income_flag_usd``: nominally ``dict[bool, float]`` but
+  defensively normalized for string keys from JSON/YAML round-trips.
+* ``trailing_distributable_income_usd``: float, 0.0 when no snapshot.
+* ``distributable_income_by_source_usd``: ``dict[str, float]``.
+* ``used_bootstrap_at_run_end``: bool.
+
+### _normalize_bool_keyed_dict
+
+Converts a dict whose keys may be Python ``bool`` or strings
+(``"true"``/``"false"``/``"True"``/``"False"``) to ``dict[bool, float]``.
+Guards against silent key-type drift when diagnostics pass through
+JSON/YAML serialization.
+
+### _extract_spending_base_for_coverage
+
+Returns ``(SpendingBaseBreakdown | None, list[str])`` — breakdown and
+bridge advisories.
+
+Return paths:
+
+1. ``spending_diagnostics is None`` or ``engine != "OwlRule"`` → ``(None, [])``.
+   Non-Owl rules produce no bridge.
+2. ``distributable_income`` mode, ``trailing_distributable_income_usd <= 0.0``
+   → ``(None, [run-too-short advisory])``. Run has not yet crossed a
+   year-boundary with distributable-income data.
+3. ``distributable_income`` mode, valid trailing income → ``(breakdown, [])``
+   with bootstrap advisory appended when ``is_bootstrap=True``. The
+   breakdown carries ``base_usd = trailing_distributable_income_usd``;
+   ``excluded_by_tier_usd`` and ``excluded_by_income_flag_usd`` are empty
+   (flow-side base has no NAV exclusions).
+4. NAV-side mode (``None``=total_nav or named NAV base),
+   ``spending_base_run_end_usd <= 0.0`` → ``(None, [run-too-short advisory])``.
+5. NAV-side mode, valid base → ``(breakdown, [])``. The breakdown carries
+   ``base_usd``, normalized tier and income-flag exclusion dicts.
+
+### Constraint 6: annual_spend_usd and spending_base are orthogonal
+
+``annual_spend_usd`` (for ``liquid_to_annual_spend``) is set via
+``LiquidityObligationConfig`` — an explicit obligation input that has no
+dependency on the Owl spending-base reconstruction. The Phase 18 bridge
+adds ``liquid_to_spending_base`` (and optionally
+``liquid_nav_to_annual_income_estimate``) as a second ratio from the Owl
+reconstruction. The two ratios answer different questions and are computed
+independently.
+
+### Advisory injection pattern
+
+``LiquidityCoverageDiagnostics.advisories`` is a mutable list on a
+non-frozen dataclass. Bridge advisories (bootstrap, run-too-short) are
+appended to ``liquidity_coverage_result.diagnostics.advisories`` after
+``compute_liquidity_coverage`` returns, inside ``_build_ledger``. This
+keeps the pure function ``compute_liquidity_coverage`` free of orchestrator
+concerns.
+
+### Default-off byte-stability
+
+When ``cfg.position_ingestion is None`` the bridge is never called.
+``_extract_spending_base_for_coverage`` is always invoked after the
+per-quarter loop (so spending diagnostics are complete), but its output is
+discarded when position ingestion is not configured. Pre-Phase-17
+trajectories remain byte-identical.
+
+### Key schemas and functions
+
+```
+src/aa_model/integration/orchestrator.py
+    _normalize_bool_keyed_dict(d: dict) → dict[bool, float]
+    _extract_spending_base_for_coverage(spending_diagnostics, cfg)
+        → tuple[SpendingBaseBreakdown | None, list[str]]
+    _run_liquidity_coverage (spending_base: object = None param added)
+    _build_ledger (calls _extract_spending_base_for_coverage; injects advisories)
+
+tests/test_phase18_spending_base_bridge.py   (synthetic fixtures only)
+```
+
+### Test discipline
+
+* ``_normalize_bool_keyed_dict``: Python bool keys pass-through; string key
+  normalization (``"true"``/``"False"`` → bool).
+* ``_extract_spending_base_for_coverage``: None diagnostics; non-Owl engine;
+  NAV-side run-too-short; NAV-side year-boundary; distributable_income
+  bootstrap advisory; distributable_income run-too-short.
+* 8 tests total. Full suite: 326 green (4 pre-existing cvxportfolio failures
+  unrelated to Phase 18).
+
+### Out of scope for Phase 18
+
+* No Monte Carlo.
+* No PE pacing integration.
+* No semi-liquid redemption modeling.
+* No L19 full resolution.
+* No changes to ``StudyConfig`` fields.
+* No new ``OwlRule`` accessor methods — reconstruction from diagnostics dict
+  only.

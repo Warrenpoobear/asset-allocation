@@ -485,9 +485,15 @@ def _build_ledger(
     if callable(diag_method):
         spending_diagnostics = diag_method()
 
+    # Phase 18 / L20: extract spending base from Owl diagnostics for
+    # the liquidity coverage bridge. Returns (None, []) for non-Owl
+    # rules or runs too short to reach a year-boundary.
+    spending_base_for_coverage, bridge_advisories = (
+        _extract_spending_base_for_coverage(spending_diagnostics, cfg)
+    )
+
     # Phase 17 / L20: position ingestion + liquidity coverage. Run after
-    # the per-quarter loop so spending_diagnostics is available (though
-    # SpendingBaseBreakdown integration is deferred to Phase 18+).
+    # the per-quarter loop so spending_diagnostics is available.
     # Default-off: None values when position_ingestion is not configured.
     position_ingestion_result = None
     liquidity_coverage_result = None
@@ -517,8 +523,15 @@ def _build_ledger(
             manifest_version=cfg.position_ingestion.manifest_version,
         )
         liquidity_coverage_result = _run_liquidity_coverage(
-            position_ingestion_result, position_manifest, cfg
+            position_ingestion_result, position_manifest, cfg,
+            spending_base=spending_base_for_coverage,
         )
+        # Phase 18: inject bootstrap / run-too-short advisories from
+        # the spending-base extraction into the coverage diagnostics.
+        if bridge_advisories:
+            liquidity_coverage_result.diagnostics.advisories.extend(  # type: ignore[union-attr]
+                bridge_advisories
+            )
 
     return (
         ledger,
@@ -555,16 +568,18 @@ def _run_liquidity_coverage(
     position_result: object,
     position_manifest: object,
     cfg: StudyConfig,
+    *,
+    spending_base: object = None,
 ) -> object:
-    """Phase 17 / L20 — orchestration helper for liquidity coverage.
+    """Phase 17/18 / L20 — orchestration helper for liquidity coverage.
 
-    Reviewer tightening 4: threads positions, manager_terms,
+    Phase 17 reviewer tightening 4: threads positions, manager_terms,
     liquidity_tier_overrides, liquidity_obligations,
-    liquidity_coverage_config, and spending_base_is_flow into
-    ``compute_liquidity_coverage``.
+    liquidity_coverage_config, and spending_base_is_flow.
 
-    ``spending_base=None``: ``SpendingBaseBreakdown`` integration from
-    the Owl rule run deferred to Phase 18+.
+    Phase 18: ``spending_base`` is now the reconstructed
+    ``SpendingBaseBreakdown`` from the Owl run (or ``None`` for non-Owl
+    rules and runs too short to have a year-boundary snapshot).
     """
     from aa_model.liquidity.coverage import (
         LiquidityCoverageConfig,
@@ -572,12 +587,8 @@ def _run_liquidity_coverage(
         compute_liquidity_coverage,
     )
 
-    # type narrowing — typed loosely at the call site to avoid circular imports
-    from aa_model.ingestion.schemas_position import PositionManifestConfig
-    from aa_model.ingestion.schemas_position import PositionIngestionResult as _PIR
-
-    pr = position_result  # type: ignore[assignment]
-    pm = position_manifest  # type: ignore[assignment]
+    pr = position_result
+    pm = position_manifest
 
     obligations = LiquidityObligationConfig.model_validate(
         cfg.liquidity_obligations or {}
@@ -590,18 +601,115 @@ def _run_liquidity_coverage(
         and cfg.spending.guardrail is not None
         and cfg.spending.guardrail.spending_base == "distributable_income"
     )
-    diag = pr.diagnostics
+    diag = pr.diagnostics  # type: ignore[union-attr]
     return compute_liquidity_coverage(
-        pr.positions,
+        pr.positions,  # type: ignore[union-attr]
         obligations,
-        tier_overrides=pm.liquidity_tier_overrides,
-        manager_terms=pm.manager_terms,
-        spending_base=None,
+        tier_overrides=pm.liquidity_tier_overrides,  # type: ignore[union-attr]
+        manager_terms=pm.manager_terms,  # type: ignore[union-attr]
+        spending_base=spending_base,  # type: ignore[arg-type]
         spending_base_is_flow=spending_base_is_flow,
         stale_nav_count=diag.stale_valuation_count,
         untagged_position_count=diag.positions_missing_bucket,
         config=coverage_cfg,
     )
+
+
+def _normalize_bool_keyed_dict(d: dict) -> dict[bool, float]:
+    """Normalize a dict whose keys may be bool or string to dict[bool, float].
+
+    OwlRule emits ``excluded_nav_by_income_flag_usd`` with Python bool keys.
+    When the dict passes through JSON/YAML serialization the keys may arrive as
+    ``"true"``/``"false"`` or ``"True"``/``"False"`` strings. Handles all four
+    variants defensively so the bridge never silently drops tier data.
+    """
+    out: dict[bool, float] = {}
+    for k, v in d.items():
+        if isinstance(k, bool):
+            out[k] = float(v)
+        elif isinstance(k, str):
+            out[k.lower() == "true"] = float(v)
+    return out
+
+
+def _extract_spending_base_for_coverage(
+    spending_diagnostics: dict | None,
+    cfg: StudyConfig,
+) -> tuple[object, list[str]]:
+    """Phase 18 / L20 — reconstruct SpendingBaseBreakdown from Owl diagnostics.
+
+    Returns ``(SpendingBaseBreakdown | None, bridge_advisories)``.
+
+    Returns ``(None, [])`` when spending_diagnostics is None (non-Owl rule) or
+    ``engine != "OwlRule"``. Returns ``(None, [advisory])`` when the run was too
+    short to produce a year-boundary snapshot (base_usd <= 0.0).
+
+    For ``distributable_income`` mode the ``base_usd`` is the trailing
+    distributable income; for all NAV-side modes (including ``None``=total_nav)
+    it is ``spending_base_run_end_usd``.
+
+    Bridge advisories are injected into
+    ``LiquidityCoverageDiagnostics.advisories`` after
+    ``compute_liquidity_coverage`` returns.
+    """
+    if spending_diagnostics is None:
+        return None, []
+    if spending_diagnostics.get("engine") != "OwlRule":
+        return None, []
+
+    from aa_model.spending.spending_base import SpendingBaseBreakdown
+
+    advisories: list[str] = []
+    mode = spending_diagnostics.get("spending_base_mode")  # None → total_nav
+
+    if mode == "distributable_income":
+        base_usd = float(
+            spending_diagnostics.get("trailing_distributable_income_usd", 0.0)
+        )
+        if base_usd <= 0.0:
+            advisories.append(
+                "spending_base bridge: distributable_income run too short "
+                "to reach a year-boundary — "
+                "liquid_nav_to_annual_income_estimate unavailable"
+            )
+            return None, advisories
+        is_bootstrap = bool(spending_diagnostics.get("used_bootstrap_at_run_end", False))
+        if is_bootstrap:
+            advisories.append(
+                "spending_base bridge: distributable_income base used bootstrap "
+                "value (run window < distribution window) — "
+                "income estimate is static fallback"
+            )
+        by_source = dict(
+            spending_diagnostics.get("distributable_income_by_source_usd", {})
+        )
+        breakdown = SpendingBaseBreakdown(
+            base_usd=base_usd,
+            excluded_by_tier_usd={},
+            excluded_by_income_flag_usd={},
+            distributable_income_by_source_usd=by_source,
+            is_bootstrap=is_bootstrap,
+        )
+        return breakdown, advisories
+
+    # NAV-side modes: total_nav (None), liquid_nav, income_producing_nav, etc.
+    base_usd = float(spending_diagnostics.get("spending_base_run_end_usd", 0.0))
+    if base_usd <= 0.0:
+        advisories.append(
+            "spending_base bridge: NAV-side run too short to reach a "
+            "year-boundary — liquid_to_spending_base unavailable"
+        )
+        return None, advisories
+    excluded_by_tier = dict(spending_diagnostics.get("excluded_nav_by_tier_usd", {}))
+    excluded_by_income_flag = _normalize_bool_keyed_dict(
+        spending_diagnostics.get("excluded_nav_by_income_flag_usd", {})
+    )
+    breakdown = SpendingBaseBreakdown(
+        base_usd=base_usd,
+        excluded_by_tier_usd=excluded_by_tier,
+        excluded_by_income_flag_usd=excluded_by_income_flag,
+    )
+    return breakdown, advisories
 
 
 def _apply_scenario(
