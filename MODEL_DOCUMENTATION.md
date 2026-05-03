@@ -9746,3 +9746,96 @@ future spending- and liquidity-related modeling work.
   prerequisite for the operational manifest-authoring milestone;
   the milestone itself (local manifest authored + clean
   reconciliation against the live workbook) is not yet complete.
+
+### 2026-05-03 — Phase 14.2: workbook discovery + draft-manifest generator
+
+* **What.** Reduces the burden of authoring the v7 manifest by
+  hand. The model now scrapes workbook structure read-only and
+  emits a draft :class:`WorkbookManifestConfig`. The scraper
+  discovers STRUCTURE; the manifest governs MEANING.
+  Discovery-assisted ingestion flow:
+
+  ```
+  workbook → discovery → draft manifest → human classification
+       → approved local manifest → ingestion
+  ```
+
+* **New module ``src/aa_model/ingestion/discovery.py``.**
+  - ``discover_workbook(path)`` opens via
+    ``openpyxl(read_only=True, data_only=True, keep_links=False)``,
+    walks every sheet, infers role + layout_type + header
+    candidates, computes manifest-level majorities (header row +
+    period format), and returns a
+    :class:`WorkbookDiscoveryResult`.
+  - ``build_draft_manifest(discovery, *, mode, workbook_version)``
+    converts the discovery into a :class:`WorkbookManifestConfig`.
+    ``row_classification_rules`` are deliberately empty on every
+    entity sheet — those carry sensitive per-line content and
+    must be authored locally.
+  - Per-sheet classification: family_aggregate / board_snapshot /
+    assumptions_metadata / ownership_structure / re_partnership /
+    entity_trust / entity_llc / entity_sheet / unknown. Layout
+    classification: horizontal_quarter (header + ≥3 label rows)
+    or display_only (catch-all).
+
+* **CLI ``src/aa_model/ingestion/discover_workbook.py``.**
+  Invoked as ``python -m aa_model.ingestion.discover_workbook``.
+  Flags: ``--workbook PATH`` (required), ``--mode``
+  (``privacy_safe`` default; ``local_private``), ``--out PATH``
+  (optional; stdout diagnostics if omitted), ``--workbook-version``,
+  ``--dry-run``. ``local_private`` mode refuses to write to a path
+  that doesn't end in ``_local.yaml`` or live under
+  ``data/external/`` — both gitignored per the Phase 14.x
+  conventions.
+
+* **Privacy posture (Phase 14 RT4 + Phase 14.2 RT).**
+  - **privacy_safe** (default): redacts any sheet name that
+    doesn't match a known structural keyword set
+    (``summary`` / ``aggregate`` / ``rollup`` / ``cash flow`` /
+    ``board`` / ``snapshot`` / ``assumption`` / ``notes`` /
+    ``ownership`` / ``structure``). Suitable for chat summaries,
+    committed scaffold, public review.
+  - **local_private**: preserves real sheet names; refuses to
+    write to a non-gitignored path.
+  - The scraper NEVER prints cell values, dollar amounts, or row
+    contents. ``--dry-run`` surfaces aggregate structural
+    diagnostics only.
+
+* **Human-classification boundary (the scraper MUST NOT infer):**
+  legal distributability; tax treatment / withholding;
+  entity-governance availability; whether OpCo cash is
+  family-office spendable; whether development / land value is
+  spendable; final ``distributable_candidate`` /
+  ``restricted`` / ``recurrence_type`` / ``certainty`` /
+  ``domain`` per row. These remain TODO on the draft manifest's
+  ``row_classification_rules`` for human authoring under
+  ``configs/workbook_v7_manifest_local.yaml``.
+
+* **Tests (``tests/test_phase14_2_discovery.py`` — 8 tests).**
+  All synthetic-fixture-only:
+  1. row-4 q_yyyy synthetic discovers correctly
+  2. display_only detection (sparse / no-header sheets)
+  3. draft manifest validates under
+     ``WorkbookManifestConfig.model_validate``
+  4. privacy_safe redacts non-structural sheet names; structural
+     names preserved
+  5. local_private path safety check refuses non-gitignored output
+  6. majority format / header detection across multiple sheets
+  7. CLI ``--dry-run`` prints diagnostics; no YAML; no cell values
+  8. Phase 14 ingestion regression anchor — adding discovery does
+     not change ``ingest_workbook`` behavior
+
+* **Live-workbook discovery dry-run.** Aggregate structural counts
+  only — see the post-implementation operational summary
+  surfaced after the commit. No live values, no sensitive sheet
+  names; report-grade structural digest only.
+
+* **Backward-compatible.** Yes. Discovery is a separate read path
+  added alongside ingestion; existing fixtures, configs, and
+  trajectories byte-identical. ``ingest_workbook`` unchanged.
+
+* **L19.** Held at PARTIALLY RESOLVED. Discovery + draft-manifest
+  reduce the friction of moving toward the operational L19 gate
+  (local manifest authored + clean reconciliation pass) but do
+  not on their own complete it. ``row_classification_rules``
+  remain a human-authored input.
