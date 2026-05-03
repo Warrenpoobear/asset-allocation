@@ -46,3 +46,4 @@ Thumbs.db
 # is gitignored so live sheet identifiers and per-row classification
 # detail never reach the repo.
 configs/workbook_v7_manifest_local.yaml
+configs/investment_summary_manifest_local.yaml
