@@ -102,9 +102,7 @@ def _reclassify(
         return "blocking", "source_missing"
 
     delta_pct = recon_diag.total_delta_pct
-    delta_usd = (
-        abs(recon_diag.total_delta_usd) if recon_diag.total_delta_usd is not None else None
-    )
+    delta_usd = abs(recon_diag.total_delta_usd) if recon_diag.total_delta_usd is not None else None
 
     if delta_pct is None:
         return "n/a", "none"
@@ -113,8 +111,12 @@ def _reclassify(
     pct_blocks = pct_val >= cfg.blocking_pct
     pct_warns = pct_val >= cfg.warning_pct
 
-    usd_blocks = cfg.blocking_usd is not None and delta_usd is not None and delta_usd >= cfg.blocking_usd
-    usd_warns = cfg.warning_usd is not None and delta_usd is not None and delta_usd >= cfg.warning_usd
+    usd_blocks = (
+        cfg.blocking_usd is not None and delta_usd is not None and delta_usd >= cfg.blocking_usd
+    )
+    usd_warns = (
+        cfg.warning_usd is not None and delta_usd is not None and delta_usd >= cfg.warning_usd
+    )
 
     if pct_blocks and usd_blocks:
         return "blocking", "both"

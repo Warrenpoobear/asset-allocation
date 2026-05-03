@@ -1184,8 +1184,7 @@ def write_markdown_report(
                 lines.append("  override_justification:    [justification provided]")
             if gr.advisories:
                 lines.append(
-                    f"  gate_advisories ({len(gr.advisories)}): "
-                    + "; ".join(gr.advisories)
+                    f"  gate_advisories ({len(gr.advisories)}): " + "; ".join(gr.advisories)
                 )
         lines.append("")
         lines.append(

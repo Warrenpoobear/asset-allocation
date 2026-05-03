@@ -22,7 +22,6 @@ from dataclasses import dataclass
 
 import pandas as pd
 import pytest
-
 from aa_model.pe.call_obligation import (
     PECallObligationBridgeDiagnostics,
     derive_pe_capital_call_obligation,
@@ -34,7 +33,6 @@ from aa_model.pe.reconciliation_gates import (
     evaluate_reconciliation_gate,
 )
 from aa_model.pe.ta_model import PROJECTION_COLUMNS
-
 
 # ---- shared synthetic helpers -----------------------------------------------
 
