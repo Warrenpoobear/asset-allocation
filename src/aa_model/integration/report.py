@@ -1141,9 +1141,7 @@ def write_markdown_report(
             if d20.workbook_calls_by_quarter:
                 lines.append("  workbook_calls_by_quarter:")
                 for q_str in sorted(d20.workbook_calls_by_quarter.keys()):
-                    lines.append(
-                        f"    {q_str}: ${d20.workbook_calls_by_quarter[q_str]:,.0f}"
-                    )
+                    lines.append(f"    {q_str}: ${d20.workbook_calls_by_quarter[q_str]:,.0f}")
         pe = d20.pe_bridge
         pe_total_fmt = (
             f"${pe.next_12m_capital_calls_usd:,.0f}"
@@ -1170,9 +1168,7 @@ def write_markdown_report(
                     lines.append(f"    {q_str}: ${d20.delta_by_quarter[q_str]:+,.0f}")
         all_advisories = list(pe.advisories) + d20.advisories
         if all_advisories:
-            lines.append(
-                f"  ADVISORIES ({len(all_advisories)}): " + "; ".join(all_advisories)
-            )
+            lines.append(f"  ADVISORIES ({len(all_advisories)}): " + "; ".join(all_advisories))
         lines.append("")
         lines.append(
             "_Capital calls are derived from the cash-flow worksheet (primary) "
