@@ -305,7 +305,13 @@ def _ingest_entity_sheet(
     workbook_filename: str,
     result: IngestionResult,
 ) -> None:
-    """Parse one entity sheet into entities + cash-flow line rows."""
+    """Parse one entity sheet into entities + cash-flow line rows.
+
+    Phase 14.1 layout knobs:
+      * spec.header_row_index → manifest.default_header_row_index → 1
+      * spec.period_header_format → manifest.period_header_format
+      * spec.layout_type == "display_only" → declare entity, skip rows
+    """
     ws = wb[sheet_name]  # type: ignore[index]
 
     # Construct the EntityRecord first so the ingestor surfaces a
@@ -321,16 +327,37 @@ def _ingest_entity_sheet(
     )
     result.entities.append(entity)
 
-    # Parse the header row + body. Layout convention (synthetic-fixture
-    # tested; see Phase 14 design block + tests):
-    #   Row 1: header. Column A is row-label; columns B+ are quarter
-    #          period headers parsed via manifest.period_header_format.
-    #   Rows 2+: data rows. Column A row label; columns B+ amounts.
+    # Phase 14.1: display_only sheets are declared but their data rows
+    # are NOT extracted. Used for sheets that are entity-shaped but
+    # are display/summary tables, not data tables (e.g., board
+    # snapshots when declared as entity sheets, ownership graphs).
+    # The unmapped-sheets diagnostic gets a sibling tracker for these.
+    if spec.layout_type == "display_only":
+        result.diagnostics.missing_optional_sheets.append(
+            f"display_only:{sheet_name}"
+        )
+        return
+
+    # Resolve effective layout knobs from spec → manifest defaults.
+    header_row_index = (
+        spec.header_row_index
+        if spec.header_row_index is not None
+        else manifest.default_header_row_index
+    )
+    period_header_format = (
+        spec.period_header_format
+        if spec.period_header_format is not None
+        else manifest.period_header_format
+    )
+
     rows = list(ws.iter_rows(values_only=True))
     if not rows:
         return
+    if header_row_index > len(rows):
+        # Sheet too short for the configured header row; nothing to parse.
+        return
 
-    header = rows[0]
+    header = rows[header_row_index - 1]
     if not header or len(header) < 2:
         return
 
@@ -338,7 +365,7 @@ def _ingest_entity_sheet(
     # whose header doesn't parse).
     column_quarters: dict[int, str] = {}
     for col_idx, raw_header in enumerate(header[1:], start=1):
-        canonical = _parse_period_header(raw_header, manifest.period_header_format)
+        canonical = _parse_period_header(raw_header, period_header_format)
         if canonical is not None:
             column_quarters[col_idx] = canonical
         else:
@@ -359,7 +386,11 @@ def _ingest_entity_sheet(
     # Track (entity_id, quarter, row_label) to detect duplicates.
     seen_keys: set[tuple[str, str, str]] = set()
 
-    for row_idx, body in enumerate(rows[1:], start=2):
+    # Body rows start AFTER the header row (Phase 14.1: header_row_index
+    # is configurable, so the body slice + 1-indexed row_idx must shift
+    # accordingly).
+    body_start = header_row_index  # 1-indexed = row immediately after header
+    for row_idx, body in enumerate(rows[body_start:], start=body_start + 1):
         if not body or len(body) < 2:
             result.diagnostics.blank_rows_skipped += 1
             continue
@@ -396,9 +427,19 @@ def _ingest_entity_sheet(
 
             key = (spec.entity_id, quarter, label)
             if key in seen_keys:
+                # Phase 14.1 privacy fix: do NOT include the raw row
+                # label in the error message — the label may contain
+                # entity names, dollar amounts, or transaction-level
+                # detail. Surface position + label length only.
                 raise ValueError(
                     f"duplicate (entity_id, quarter, row_label) at "
-                    f"{sheet_name}!row{row_idx} col{col_idx}: {key}"
+                    f"{sheet_name}!row{row_idx} col{col_idx}: "
+                    f"entity_id={spec.entity_id!r}, "
+                    f"quarter={quarter!r}, "
+                    f"row_label_length={len(label)} (content redacted). "
+                    f"If the sheet legitimately contains repeated row "
+                    f"labels (typical of aggregate / summary sheets), "
+                    f"declare it with layout_type='display_only'."
                 )
             seen_keys.add(key)
 
@@ -410,20 +451,25 @@ def _ingest_entity_sheet(
                 # line rather than mint a CashFlowLineRecord that
                 # would fail validation.
                 expected_sign_inflow = rule.direction == "inflow"
+                # Phase 14.1 privacy fix: do NOT include the raw row
+                # label or amount in the unmatched-sample entry. The
+                # sample is rendered into the report; raw labels +
+                # amounts can leak entity / dollar / transaction
+                # detail. Surface position + sign-mismatch class only.
                 if expected_sign_inflow and amount < 0:
                     result.diagnostics.unmatched_lines_count += 1
                     if len(result.diagnostics.unmatched_lines_sample) < 8:
                         result.diagnostics.unmatched_lines_sample.append(
-                            f"{sheet_name}!{label} ({quarter}): "
-                            f"sign mismatch (rule expected inflow; got {amount})"
+                            f"{sheet_name}!row{row_idx} ({quarter}): "
+                            f"sign mismatch (rule expected inflow; got negative)"
                         )
                     continue
                 if not expected_sign_inflow and amount > 0:
                     result.diagnostics.unmatched_lines_count += 1
                     if len(result.diagnostics.unmatched_lines_sample) < 8:
                         result.diagnostics.unmatched_lines_sample.append(
-                            f"{sheet_name}!{label} ({quarter}): "
-                            f"sign mismatch (rule expected outflow; got {amount})"
+                            f"{sheet_name}!row{row_idx} ({quarter}): "
+                            f"sign mismatch (rule expected outflow; got positive)"
                         )
                     continue
                 line = CashFlowLineRecord(
@@ -463,8 +509,10 @@ def _ingest_entity_sheet(
                 )
                 result.diagnostics.unmatched_lines_count += 1
                 if len(result.diagnostics.unmatched_lines_sample) < 8:
+                    # Phase 14.1 privacy fix: row-position only; no
+                    # label content. Renders into the report.
                     result.diagnostics.unmatched_lines_sample.append(
-                        f"{sheet_name}!{label} ({quarter}): unclassified"
+                        f"{sheet_name}!row{row_idx} ({quarter}): unclassified"
                     )
 
             # Tag with asset_id (RE partnership case) for downstream
@@ -503,7 +551,14 @@ def _reconcile_aggregate_sheet(
     rows = list(ws.iter_rows(values_only=True))
     if not rows:
         return
-    header = rows[0]
+    # Phase 14.1: aggregate sheets use the manifest-level
+    # default_header_row_index. Per-sheet override would require
+    # promoting board_snapshot_sheets / family_aggregate_sheets to
+    # structured specs — out of scope for Phase 14.1.
+    header_row_index = manifest.default_header_row_index
+    if header_row_index > len(rows):
+        return
+    header = rows[header_row_index - 1]
     if not header or len(header) < 2:
         return
 
@@ -515,7 +570,8 @@ def _reconcile_aggregate_sheet(
 
     snapshot_total = 0.0
     detail_total = 0.0
-    for body in rows[1:]:
+    body_start = header_row_index
+    for body in rows[body_start:]:
         if not body or len(body) < 2:
             continue
         raw_label = body[0]

@@ -9617,3 +9617,71 @@ future spending- and liquidity-related modeling work.
   operational, not implementational — a separate docs-only commit
   performs that flip after the reviewer confirms the validation
   pass.
+
+### 2026-05-03 — Phase 14.1: workbook layout discovery support
+
+* **What.** Targeted Phase 14 extension surfaced by the operational
+  validation probe. The discovery probe found that v7's data-rich
+  sheets (``Cash Flow``, ``PB Westplan``, ``PB Westplan v2``) use a
+  multi-row header band with the canonical quarterly header on
+  **row 4** in ``q_yyyy`` format ("Q1 2025"-style), while Phase 14
+  hard-coded row 1. Without this fix, ~90% of the workbook would
+  be unparseable.
+* **Schema additions (additive, default-off byte-stable).**
+  - ``WorkbookManifestConfig.default_header_row_index: int = 1``
+    (1-indexed; manifest-level default; preserves Phase 14
+    behavior).
+  - ``EntitySheetSpec.header_row_index: int | None = None``
+    (per-sheet override).
+  - ``EntitySheetSpec.period_header_format: Literal[...] | None = None``
+    (per-sheet override).
+  - ``EntitySheetSpec.layout_type: Literal["horizontal_quarter",
+    "display_only"] = "horizontal_quarter"``. ``"display_only"``
+    declares the sheet but skips data extraction (no
+    CashFlowLineRecord rows emitted) — the right disposition for
+    aggregate / summary sheets that legitimately repeat row labels
+    across sub-sections (Cash Flow, PB Westplan, ownership).
+* **Parser behavior.** ``_ingest_entity_sheet`` now uses
+  ``spec.header_row_index or manifest.default_header_row_index``
+  and ``spec.period_header_format or manifest.period_header_format``;
+  ``layout_type == "display_only"`` short-circuits before data
+  extraction. ``_reconcile_aggregate_sheet`` reads from
+  ``manifest.default_header_row_index`` (per-sheet override on
+  aggregate / board-snapshot sheets out of scope for Phase 14.1 —
+  would require promoting those declarations from ``list[str]`` to
+  structured specs).
+* **Privacy fixes (uncovered by the operational validation probe).**
+  Two ingestor-level error / diagnostic strings exposed raw row
+  labels — these labels can contain entity names, dollar amounts,
+  and transaction-level detail. Fixed:
+  - Duplicate-row ValueError now reports row position + entity_id +
+    quarter + label *length* (content redacted) plus a remediation
+    hint pointing the user at ``layout_type="display_only"`` for
+    aggregate sheets.
+  - ``unmatched_lines_sample`` (which renders into the report) now
+    carries row position only, not the label content.
+* **Tests.** 5 new Phase 14.1 tests in
+  ``tests/test_phase14_1_layout_discovery.py``: row-4 ``q_yyyy``
+  fixture parses; per-sheet ``header_row_index`` override beats
+  manifest default; per-sheet ``period_header_format`` override
+  beats manifest default; ``layout_type="display_only"`` declares
+  but skips; default behavior byte-stable vs. Phase 14 (regression
+  anchor). Total: 282 passed (277 + 5). All synthetic fixtures
+  built programmatically in tmp_path (Phase 14 RT4 still in force).
+* **Operational validation re-probe.** Live workbook re-probed via
+  ``/tmp/phase14_1_validation_probe.py`` (not committed) with an
+  in-memory probe manifest declaring 4 sheets as ``display_only``.
+  Results: 4 entities declared, 0 cash-flow lines (correct), 4
+  display_only diagnostics surfaced, 0 unparseable headers, 0
+  unmatched lines, no leaks of values / labels / identifiers.
+  Standing CAVEAT (Phase 14 RT1) populated.
+* **Backward-compatible.** Yes. All existing fixtures, configs,
+  and trajectories byte-identical to Phase 14.
+* **L19.** Held at ``[PARTIALLY RESOLVED 2026-05-03, Phase 12 +
+  12.5 + 13 + 14 + 14.1]``. The operational validation against
+  the real workbook still requires manifest authoring (entity
+  ``row_classification_rules``) plus a clean reconciliation pass.
+  L19 flips to RESOLVED only after that operational milestone, with
+  wording narrowed to "RESOLVED for modeled distributable-income
+  ingestion; legal / tax / entity-governance distributability
+  remains out of scope."

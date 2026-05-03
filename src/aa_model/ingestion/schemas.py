@@ -196,7 +196,21 @@ class RowClassificationRule(BaseModel):
 
 
 class EntitySheetSpec(BaseModel):
-    """Manifest spec for a single entity-level workbook sheet."""
+    """Manifest spec for a single entity-level workbook sheet.
+
+    Phase 14.1 added optional per-sheet overrides for the parser's
+    layout assumptions:
+
+    * ``header_row_index`` — 1-indexed row that carries the canonical
+      quarter headers; defaults to ``manifest.default_header_row_index``
+      when None. v7 entity sheets typically use 4.
+    * ``period_header_format`` — per-sheet format override; defaults
+      to ``manifest.period_header_format`` when None. v7 entity sheets
+      typically use ``"q_yyyy"``.
+    * ``layout_type`` — ``"horizontal_quarter"`` is the default
+      Phase-14 parse path. ``"display_only"`` declares the sheet but
+      skips data extraction (no CashFlowLineRecord rows emitted).
+    """
 
     model_config = _STRICT
     sheet_name: str = Field(min_length=1)
@@ -206,6 +220,11 @@ class EntitySheetSpec(BaseModel):
     parent_entity_id: str | None = None
     cash_flow_role: _CASH_FLOW_ROLE_LITERAL
     row_classification_rules: list[RowClassificationRule] = Field(default_factory=list)
+    # Phase 14.1 layout overrides (optional; default None preserves
+    # Phase 14 behavior).
+    header_row_index: int | None = Field(default=None, ge=1)
+    period_header_format: _PERIOD_HEADER_LITERAL | None = None
+    layout_type: Literal["horizontal_quarter", "display_only"] = "horizontal_quarter"
 
     @field_validator("entity_id", "parent_entity_id")
     @classmethod
@@ -260,6 +279,12 @@ class WorkbookManifestConfig(BaseModel):
     board_snapshot_sheets: list[str] = Field(default_factory=list)
 
     period_header_format: _PERIOD_HEADER_LITERAL = "yyyy_q"
+    # Phase 14.1 — workbook layout discovery support.
+    # Default header-row index (1-indexed). Phase 14 hard-coded row 1;
+    # v7 entity sheets actually use row 4 (multi-row header band with
+    # the canonical "Q1 2025"-style header on row 4). Manifest-level
+    # default; per-sheet override available on EntitySheetSpec.
+    default_header_row_index: int = Field(default=1, ge=1)
     subtotal_label_patterns: list[str] = Field(
         default_factory=lambda: [
             "total",
