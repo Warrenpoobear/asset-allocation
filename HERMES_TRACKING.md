@@ -8,21 +8,23 @@
 
 ## Current State <!-- auto -->
 
-- Current phase: **Phase 19 landed (PE pacing → next-12m capital-call obligation, pacing-only); Phase 19.1 design-locked (workbook reconciliation)**
-- Latest commit: `e7e81ec` — docs(model): Phase 19.1 design lock — workbook capital-call reconciliation
+- Current phase: **Phase 20 — PE call-obligation reconciliation to cash-flow worksheet (landed)**
+- Latest commit: `2be73ca` — chore(lint): ruff --fix + format sweep for Phase 20 (a5114f6)
 - Branch: `main` (0 ahead, 0 behind origin)
-- Last pushed: 2026-05-03 13:55:26 -0400 (`e7e81ec`)
+- Last pushed: 2026-05-03 14:00:xx -0400 (pending push)
 - Working tree: clean
-- Tests: **341 passed** (`.venv/bin/pytest -p no:warnings`)
-- Ruff: clean across `src tests scripts` (post-Phase-19 lint sweep at `9c250f4`)
-- Latest run set: `data/processed/runs/aa-e3f6ab2337ad-96451d89bace-20260503T175225Z-*`
+- Tests: **347 passed** (`.venv/bin/pytest -p no:warnings`; +6 from Phase 20)
+- Ruff: clean across `src tests scripts` (post-Phase-20 lint sweep at `2be73ca`)
+- Latest run set: `data/processed/runs/aa-e3f6ab2337ad-96451d89bace-20260503T180424Z-*`
 
-Recent series (5 commits since 2026-05-03 12:00 ET):
-- `e7e81ec` docs(model): Phase 19.1 design lock — workbook capital-call reconciliation
+Recent series (7 commits since 2026-05-03 12:00 ET):
+- `2be73ca` chore(lint): ruff --fix + format sweep for Phase 20 (a5114f6)
+- `5ff335f` docs(tracking): post-Phase-19 / Phase-19.1-locked sync
+- `a5114f6` Phase 20 / L20: PE call-obligation reconciliation to cash-flow worksheet
+- `e7e81ec` docs(model): Phase 19.1 design lock — workbook capital-call reconciliation [SUPERSEDED by Phase 20]
 - `9c250f4` chore(lint): ruff --fix + format sweep for Phase 19 (af58dd3)
 - `0ad2420` docs(model): Phase 19 design prompt — PE call-obligation reconciled to workbook
 - `8a150c5` docs(claude): standing constraint — worksheet-aligned spending/liquidity/PE pacing
-- `af58dd3` Phase 19 / L20: PE pacing → next-12m capital-call obligation bridge
 
 ## Open Gates
 
@@ -31,15 +33,15 @@ Recent series (5 commits since 2026-05-03 12:00 ET):
 - [ ] **Phase 10 L14 transaction-cost diagnostics** — partially resolved at
       `49544f7` (report section); 4 cvxportfolio-gated tests still skipped /
       ModuleNotFoundError when extra not installed.
-- [ ] **Phase 19.1 implementation** — design locked at `e7e81ec`
-      (`docs/phase_19_1_design_lock.md`). 5-commit implementation series
-      planned: workbook capital_call_candidate classification → source
-      taxonomy rename + reconcile fn → orchestrator + report wiring →
-      tracking sync. Closes the gap between Phase 19 (pacing-only) and the
-      standing worksheet-alignment constraint at `8a150c5`.
-- [ ] **L20 doc-line** — Phase 19 commit `af58dd3` references L20 but
-      `MODEL_DOCUMENTATION.md` does not yet have an `### L20 —` heading.
-      Author should add status line in the Phase 19.1 series.
+- [ ] **Phase 19.1 design lock** — SUPERSEDED by Phase 20 (`a5114f6`).
+      `docs/phase_19_1_design_lock.md` retained as traceability record;
+      Phase 20 chose `category="capital_call"` string boundary instead
+      of new `capital_call_candidate` field, and 10/25% delta bands
+      instead of 5%/sign-mismatch. Open follow-ups (3 missing tests,
+      sign-mismatch handling, schema tightening) noted in the
+      superseded lock file.
+- [ ] **L20 doc-line** — Phase 20 added `### L20 —` heading to
+      MODEL_DOCUMENTATION.md (verify in next sweep).
 - [ ] **L19 spending-base realism** — partially resolved (Phase 12/12.5/13/14
       at MODEL_DOCUMENTATION.md:1376). Remaining gap: real-workbook
       validation pending.
@@ -64,7 +66,7 @@ Recent series (5 commits since 2026-05-03 12:00 ET):
 | L14 | Only linear transaction cost is modeled (partial resolve)      | 984      |
 | L17 | Cross-engine metric comparability is not meaningful            | 839      |
 | L19 | Spending-base realism — partial; pending real-workbook validation | 1376  |
-| L20 | PE call obligation — workbook reconciliation pending (Phase 19.1) | (Ph19) |
+| L20 | PE call obligation — workbook reconciliation (resolved Phase 20; 3 follow-up tests pending) | (Ph20) |
 
 ## Resolved Limitations
 
@@ -124,13 +126,13 @@ Cron jobs are registered separately in Hermes (see `cronjob list`).
 
 ### Asset Allocation Model — Status
 ```
-Current phase:        Phase 19 landed; Phase 19.1 design-locked (workbook reconciliation)
-Last pushed commit:   e7e81ec  (Phase 19.1 design lock)
-Tests:                341 passed
-Ruff errors:          0 (clean across src/tests/scripts post-Phase-19 sweep at 9c250f4)
-Open limitations:     13  (L20 added — Phase 19.1 will close)
+Current phase:        Phase 20 landed (PE call-obligation reconciled to workbook)
+Last pushed commit:   2be73ca  (Phase 20 lint sweep)
+Tests:                347 passed
+Ruff errors:          0 (clean across src/tests/scripts post-Phase-20 sweep at 2be73ca)
+Open limitations:     13  (L20 effectively resolved; 3 follow-up tests pending)
 Resolved limitations: 7
-Next gated task:      Phase 19.1 implementation series (5 commits per design lock)
+Next gated task:      L20 follow-up tests (sign-mismatch, per-quarter mixed window, determinism); confirm L20 status line in MODEL_DOCUMENTATION.md
 Last model-doc update: 2026-05-03 (L19 status under Phase 14)
 Latest run:           20260503T045900Z (crisis_correlation)
 ```
