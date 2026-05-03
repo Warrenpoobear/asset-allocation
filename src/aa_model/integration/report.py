@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from aa_model.ingestion.schemas import IngestionResult
     from aa_model.ingestion.schemas_position import PositionIngestionResult
     from aa_model.liquidity.coverage import LiquidityCoverageResult
-    from aa_model.pe.call_obligation import PECallObligationBridgeDiagnostics
+    from aa_model.pe.call_reconciliation import WorkbookCallReconciliationDiagnostics
     from aa_model.producers.distribution import DistributionProducerDiagnostics
 
 
@@ -56,7 +56,7 @@ def write_markdown_report(
     workbook_ingestion_result: IngestionResult | None = None,
     position_ingestion_result: PositionIngestionResult | None = None,
     liquidity_coverage_result: LiquidityCoverageResult | None = None,
-    pe_call_bridge_diag: PECallObligationBridgeDiagnostics | None = None,
+    call_recon_diag: WorkbookCallReconciliationDiagnostics | None = None,
 ) -> None:
     end_nav = ledger.end_nav_by_quarter()
     initial_total = sum(ledger.initial_nav.values())
@@ -1117,42 +1117,68 @@ def write_markdown_report(
         )
         lines.append("")
 
-    # PE capital-call obligation bridge (Phase 19 / L20). Rendered when
-    # position ingestion is configured and a bridge result was produced.
-    # Three source variants: "explicit" (user-provided), "pe_pacing"
-    # (derived from forward projections), "unavailable" (no projections).
-    if pe_call_bridge_diag is not None:
-        d19 = pe_call_bridge_diag
+    # PE call-obligation reconciliation (Phase 20 / L20). Rendered when
+    # position ingestion is configured. Source precedence:
+    # explicit_config > cashflow_workbook > pe_pacing_model > unavailable.
+    # Delta table rendered when both workbook and PE pacing are available.
+    if call_recon_diag is not None:
+        d20 = call_recon_diag
         calls_fmt = (
-            f"${d19.next_12m_capital_calls_usd:,.0f}"
-            if d19.next_12m_capital_calls_usd is not None
+            f"${d20.next_12m_capital_calls_usd:,.0f}"
+            if d20.next_12m_capital_calls_usd is not None
             else "n/a"
         )
-        lines.append("## PE capital-call obligation bridge (Phase 19, advisory)")
+        lines.append("## PE call-obligation reconciliation (Phase 20, advisory)")
         lines.append("")
-        lines.append(f"  source:                    {d19.source}")
-        lines.append(f"  coverage_quarter:          {d19.coverage_quarter}")
+        lines.append(f"  source_used:               {d20.source_used}")
+        lines.append(f"  coverage_quarter:          {d20.coverage_quarter}")
         lines.append(f"  next_12m_capital_calls:    {calls_fmt}")
-        lines.append(f"  quarters_included:         {', '.join(d19.quarters_included)}")
-        if d19.quarters_in_horizon:
-            lines.append(f"  quarters_in_horizon:       {', '.join(d19.quarters_in_horizon)}")
-        if d19.calls_by_quarter:
-            lines.append("  calls_by_quarter:")
-            for q_str in sorted(d19.calls_by_quarter.keys()):
-                lines.append(f"    {q_str}: ${d19.calls_by_quarter[q_str]:,.0f}")
-        if d19.top_contributors:
-            lines.append("  top contributors (fund, next-12m call):")
-            for fund_name, amt in d19.top_contributors:
+        lines.append(f"  window:                    {', '.join(d20.quarters_in_window)}")
+        if d20.explicit_usd is not None:
+            lines.append(f"  explicit_config_usd:       ${d20.explicit_usd:,.0f}")
+        if d20.workbook_total_usd is not None:
+            lines.append(f"  workbook_total_usd:        ${d20.workbook_total_usd:,.0f}")
+            if d20.workbook_calls_by_quarter:
+                lines.append("  workbook_calls_by_quarter:")
+                for q_str in sorted(d20.workbook_calls_by_quarter.keys()):
+                    lines.append(
+                        f"    {q_str}: ${d20.workbook_calls_by_quarter[q_str]:,.0f}"
+                    )
+        pe = d20.pe_bridge
+        pe_total_fmt = (
+            f"${pe.next_12m_capital_calls_usd:,.0f}"
+            if pe.next_12m_capital_calls_usd is not None
+            else "n/a"
+        )
+        lines.append(f"  pe_pacing_total_usd:       {pe_total_fmt}")
+        if pe.calls_by_quarter:
+            lines.append("  pe_calls_by_quarter:")
+            for q_str in sorted(pe.calls_by_quarter.keys()):
+                lines.append(f"    {q_str}: ${pe.calls_by_quarter[q_str]:,.0f}")
+        if pe.top_contributors:
+            lines.append("  pe_top_contributors (fund, next-12m call):")
+            for fund_name, amt in pe.top_contributors:
                 lines.append(f"    {fund_name}: ${amt:,.0f}")
-        if d19.advisories:
-            lines.append(f"  ADVISORIES ({len(d19.advisories)}): " + "; ".join(d19.advisories))
+        if d20.total_delta_usd is not None:
+            lines.append(
+                f"  reconciliation_delta:      ${d20.total_delta_usd:+,.0f} "
+                f"({d20.total_delta_pct:.1f}% of max) — {d20.delta_classification}"
+            )
+            if d20.delta_by_quarter:
+                lines.append("  delta_by_quarter (workbook − pe_pacing):")
+                for q_str in sorted(d20.delta_by_quarter.keys()):
+                    lines.append(f"    {q_str}: ${d20.delta_by_quarter[q_str]:+,.0f}")
+        all_advisories = list(pe.advisories) + d20.advisories
+        if all_advisories:
+            lines.append(
+                f"  ADVISORIES ({len(all_advisories)}): " + "; ".join(all_advisories)
+            )
         lines.append("")
         lines.append(
-            "_PE calls are derived from deterministic forward-pacing "
-            "projections (Phase 7 TA/STAIRS). Actual capital calls depend "
-            "on GP discretion, market conditions, and fund-level pacing "
-            "decisions that the model cannot assert. T4: calls are never "
-            "inferred from unfunded commitments × a percentage._"
+            "_Capital calls are derived from the cash-flow worksheet (primary) "
+            "and deterministic PE pacing projections (cross-check). "
+            "The worksheet is the operating forecast spine. "
+            "T4: calls are never inferred from unfunded commitments × a percentage._"
         )
         lines.append("")
 

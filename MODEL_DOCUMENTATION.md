@@ -10929,3 +10929,134 @@ tests/test_phase19_pe_call_obligation.py         (new, synthetic only)
 * No ``StudyConfig`` schema changes.
 * No stochastic pacing.
 * No L20 full resolution.
+
+---
+
+## Phase 20 design-lock — PE call-obligation reconciliation to the cash-flow worksheet
+
+**Commit:** Phase 20 / L20
+
+### Motivation
+
+Phase 19 populated ``next_12m_capital_calls_usd`` from PE pacing projections
+alone. The standing constraint requires spending / liquidity / PE pacing to
+stay aligned with Cashflow Modeling v7.xlsx. Phase 20 inserts the cash-flow
+worksheet as the primary obligation source and uses PE pacing as a
+deterministic cross-check, preventing the two forecasts from silently
+diverging.
+
+### Source precedence
+
+```
+explicit_config > cashflow_workbook > pe_pacing_model > unavailable
+```
+
+* **explicit_config** — ``cfg.liquidity_obligations.next_12m_capital_calls_usd``
+  set by user. Overrides everything. No reconciliation delta computed.
+* **cashflow_workbook** — ``CashFlowLineRecord`` rows where
+  ``category == "capital_call"`` and ``direction == "outflow"``,
+  summed (as positive USD) over the next-4-quarter window.
+  Available when ``workbook_ingestion_result`` is not None and at least
+  one qualifying line falls in the window.
+* **pe_pacing_model** — Phase 19 ``derive_pe_capital_call_obligation``
+  result. Used when workbook lines are absent.
+* **unavailable** — neither source produced next-12m calls.
+  Obligation remains None; advisory emitted.
+
+When both workbook and PE pacing are available, the reconciliation delta is
+computed regardless of which source wins the obligation value.
+
+### Category convention
+
+Workbook capital-call lines are identified by ``category == "capital_call"``
+on the ``RowClassificationRule`` in the manifest. No entity-type filter:
+the category string is the classification boundary (Q5). No schema changes
+to ``CashFlowLineRecord`` or ``RowClassificationRule`` — ``category`` is
+already a free-form ``str``.
+
+### Workbook lines outside the next-12m window
+
+If qualifying capital-call lines exist but none fall in the next-4-quarter
+window, an advisory is emitted and the source falls through to
+``pe_pacing_model`` (Q3).
+
+### Reconciliation delta classification
+
+| Band       | Condition               | Action in Phase 20        |
+|------------|-------------------------|---------------------------|
+| ``n/a``    | Only one source present | No cross-check possible   |
+| ``advisory`` | abs(Δ%) < 10%         | Informational             |
+| ``warning``  | 10% ≤ abs(Δ%) < 25%   | Advisory in report        |
+| ``blocking`` | abs(Δ%) ≥ 25%         | Strong advisory; no halt  |
+
+Denominator = max(workbook_total, pe_total) to avoid distortion.
+``blocking`` does not halt execution in Phase 20 (Q4). Hard gates deferred.
+
+### ``WorkbookCallReconciliationDiagnostics``
+
+Replaces ``PECallObligationBridgeDiagnostics`` as the primary report artifact.
+The Phase 19 PE bridge result is embedded as ``pe_bridge`` for per-fund
+breakdown. Fields: ``next_12m_capital_calls_usd``, ``source_used``,
+``coverage_quarter``, ``quarters_in_window``, ``explicit_usd``,
+``workbook_calls_by_quarter``, ``workbook_total_usd``, ``pe_bridge``,
+``delta_by_quarter``, ``total_delta_usd``, ``total_delta_pct``,
+``delta_classification``, ``advisories``.
+
+### Report section
+
+``## PE call-obligation reconciliation (Phase 20, advisory)`` replaces the
+Phase 19 bridge section. Renders source, coverage quarter, workbook and PE
+side summaries, per-quarter delta table, delta classification badge, and
+advisory list.
+
+### Default-off byte-stability
+
+``call_recon_diag = None`` when ``cfg.position_ingestion is None``.
+Pre-Phase-17 trajectories unchanged. 11th ``_build_ledger`` tuple element
+type changes from ``PECallObligationBridgeDiagnostics | None`` to
+``WorkbookCallReconciliationDiagnostics | None``.
+
+### Key schemas and functions
+
+```
+src/aa_model/pe/call_reconciliation.py           (new)
+    WorkbookCallReconciliationDiagnostics
+    aggregate_workbook_capital_calls(cash_flow_lines, coverage_quarter)
+        → (dict[str, float], list[str])
+    reconcile_call_obligation(workbook_lines, pe_bridge_diag,
+                              coverage_quarter, explicit_usd)
+        → WorkbookCallReconciliationDiagnostics
+
+src/aa_model/integration/orchestrator.py
+    _build_ledger: Phase 19 precedence block replaced by
+        derive_pe_capital_call_obligation + reconcile_call_obligation
+    11th return element: WorkbookCallReconciliationDiagnostics | None
+
+src/aa_model/integration/report.py
+    write_markdown_report: call_recon_diag param replaces pe_call_bridge_diag
+    ## PE call-obligation reconciliation section
+
+tests/test_phase20_pe_call_reconciliation.py     (new, synthetic only)
+```
+
+### Test discipline
+
+* explicit_config overrides workbook + PE pacing.
+* Workbook present → source_used=cashflow_workbook; delta computed.
+* Workbook absent → source_used=pe_pacing_model; delta_classification=n/a.
+* Delta > 25% → blocking advisory; workbook value still used.
+* Both absent → unavailable + advisory.
+* Default configs byte-stable (11th element None).
+* 6 tests total. All 17/18/19/20 targeted tests: 29/29 green.
+  Full suite: 298 green (4 pre-existing cvxportfolio failures
+  unrelated to Phase 20).
+
+### Out of scope for Phase 20
+
+* No Monte Carlo.
+* No hard blocking gate (deferred to Phase 21).
+* No stochastic pacing.
+* No workbook mutation.
+* No StudyConfig schema changes.
+* No legal/tax/entity-governance inference.
+* No L20 full resolution.

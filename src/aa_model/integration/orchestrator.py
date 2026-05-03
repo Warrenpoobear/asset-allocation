@@ -99,7 +99,7 @@ def run_orchestrator(
         workbook_ingestion_result,
         position_ingestion_result,
         liquidity_coverage_result,
-        pe_call_bridge_diag,
+        call_recon_diag,
     ) = _build_ledger(cfg, run_id)
     ledger.validate(expected_externals_by_quarter=expected_externals)
 
@@ -128,7 +128,7 @@ def run_orchestrator(
             workbook_ingestion_result=workbook_ingestion_result,
             position_ingestion_result=position_ingestion_result,
             liquidity_coverage_result=liquidity_coverage_result,
-            pe_call_bridge_diag=pe_call_bridge_diag,
+            call_recon_diag=call_recon_diag,
         )
         outputs.append("report.md")
         outputs.append("manifest.json")
@@ -168,7 +168,7 @@ def _build_ledger(
     # io/schemas clean of an ingestion dependency.
     object | None,  # PositionIngestionResult | None
     object | None,  # LiquidityCoverageResult | None
-    object | None,  # PECallObligationBridgeDiagnostics | None — Phase 19
+    object | None,  # WorkbookCallReconciliationDiagnostics | None — Phase 20
 ]:
     start_q = pd.Period(cfg.base.horizon.start_quarter, freq="Q-DEC")
     n_q = cfg.base.horizon.num_quarters
@@ -487,7 +487,7 @@ def _build_ledger(
     # Default-off: None values when position_ingestion is not configured.
     position_ingestion_result = None
     liquidity_coverage_result = None
-    pe_call_bridge_diag = None  # Phase 19
+    call_recon_diag = None  # Phase 20
     if cfg.position_ingestion is not None:
         from pathlib import Path as _Path
 
@@ -512,34 +512,29 @@ def _build_ledger(
             manifest_version=cfg.position_ingestion.manifest_version,
         )
 
-        # Phase 19 / L20: derive next-12m capital-call obligation from PE
-        # pacing projections. Measurement point = position manifest as_of_date.
-        # Override precedence: explicit user value takes priority; PE-derived
-        # value used only when user did not set next_12m_capital_calls_usd.
-        from aa_model.pe.call_obligation import (
-            PECallObligationBridgeDiagnostics,
-            derive_pe_capital_call_obligation,
-        )
+        # Phase 20 / L20: reconcile next-12m capital-call obligation from all
+        # available sources. Precedence: explicit_config > cashflow_workbook >
+        # pe_pacing_model > unavailable. When both workbook and PE pacing are
+        # available, a per-quarter delta is computed regardless of which source
+        # wins. Blocking delta does not halt execution in Phase 20.
+        from aa_model.pe.call_obligation import derive_pe_capital_call_obligation
+        from aa_model.pe.call_reconciliation import reconcile_call_obligation
 
         coverage_q = pd.Period(position_manifest.as_of_date, freq="Q-DEC")
-        user_explicit_calls = (cfg.liquidity_obligations or {}).get("next_12m_capital_calls_usd")
-        if user_explicit_calls is not None:
-            _window = [str(coverage_q + i) for i in range(1, 5)]
-            pe_call_bridge_diag = PECallObligationBridgeDiagnostics(
-                next_12m_capital_calls_usd=float(user_explicit_calls),
-                source="explicit",
-                coverage_quarter=str(coverage_q),
-                quarters_included=_window,
-                quarters_in_horizon=[],
-                fund_count=0,
-                calls_by_quarter={},
-                top_contributors=[],
-                advisories=[],
-            )
-            pe_call_obligation_usd: float | None = float(user_explicit_calls)
-        else:
-            pe_call_bridge_diag = derive_pe_capital_call_obligation(pe_proj, coverage_q)
-            pe_call_obligation_usd = pe_call_bridge_diag.next_12m_capital_calls_usd
+        explicit_usd = (cfg.liquidity_obligations or {}).get("next_12m_capital_calls_usd")
+        workbook_lines = (
+            workbook_ingestion_result.cash_flow_lines
+            if workbook_ingestion_result is not None
+            else []
+        )
+        pe_bridge_diag = derive_pe_capital_call_obligation(pe_proj, coverage_q)
+        call_recon_diag = reconcile_call_obligation(
+            workbook_lines=workbook_lines,
+            pe_bridge_diag=pe_bridge_diag,
+            coverage_quarter=coverage_q,
+            explicit_usd=explicit_usd,
+        )
+        pe_call_obligation_usd: float | None = call_recon_diag.next_12m_capital_calls_usd
 
         liquidity_coverage_result = _run_liquidity_coverage(
             position_ingestion_result,
@@ -566,7 +561,7 @@ def _build_ledger(
         workbook_ingestion_result,
         position_ingestion_result,
         liquidity_coverage_result,
-        pe_call_bridge_diag,  # Phase 19
+        call_recon_diag,  # Phase 20
     )
 
 
@@ -595,7 +590,7 @@ def _run_liquidity_coverage(
     spending_base: object = None,
     pe_call_obligation_usd: float | None = None,
 ) -> object:
-    """Phase 17/18/19 / L20 — orchestration helper for liquidity coverage.
+    """Phase 17/18/19/20 / L20 — orchestration helper for liquidity coverage.
 
     Phase 17 reviewer tightening 4: threads positions, manager_terms,
     liquidity_tier_overrides, liquidity_obligations,
@@ -605,11 +600,10 @@ def _run_liquidity_coverage(
     ``SpendingBaseBreakdown`` from the Owl run (or ``None`` for non-Owl
     rules and runs too short to have a year-boundary snapshot).
 
-    Phase 19: ``pe_call_obligation_usd`` is the resolved next-12m
-    capital-call obligation (explicit user value or PE-derived; ``None``
-    when unavailable). Injected into ``LiquidityObligationConfig`` only
-    when the user did not set ``next_12m_capital_calls_usd`` explicitly
-    (override precedence already resolved by ``_build_ledger``).
+    Phase 19/20: ``pe_call_obligation_usd`` is the resolved next-12m
+    capital-call obligation (source precedence resolved by
+    ``reconcile_call_obligation`` in Phase 20). Injected into
+    ``LiquidityObligationConfig`` only when a resolved value is available.
     """
     from aa_model.liquidity.coverage import (
         LiquidityCoverageConfig,
