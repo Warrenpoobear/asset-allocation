@@ -11572,3 +11572,153 @@ partners" sub-blocks within each section.
 - **L19 RESOLVED wording** (when reached): narrowed to "RESOLVED for
   modeled distributable-income ingestion; legal / tax / entity-governance
   distributability remains out of scope."
+
+---
+
+## L19 completion workflow — row classification plan (2026-05-03)
+
+**Status: design-lock (pre-authoring)**
+
+### Context
+
+L19 is PARTIALLY RESOLVED. The ingestion stack, discovery scraper, manifest
+scaffold, and workbook-driven orchestration are all operational. The
+remaining gate is human authoring of `row_classification_rules` for 33 of
+the 35 active `horizontal_quarter` entity sheets in the local manifest.
+
+Baseline ingestion state entering this phase:
+
+| Metric | Value |
+|---|---|
+| `horizontal_quarter` entity sheets | 35 |
+| sheets with `row_classification_rules` | 4 (capital_call patterns only) |
+| sheets with no rules | 33 |
+| `cash_flow_lines` total | 776 |
+| `unmatched_lines_count` | 752 |
+| `capital_call` lines | 24 |
+| Authoring surface rows (pilot CSV) | 234 |
+
+Target entering L19 RESOLVED: `unmatched_lines_count` near-zero (only
+structural rows intentionally left unclassified — subtotals, running
+totals, section headers with no cash-flow values).
+
+### Local artifacts (all gitignored)
+
+```
+data/external/workbook_v7_rule_authoring_pilot.csv   — 234 rows; authoring surface
+data/external/workbook_v7_row_label_inventory.csv    — per-sheet row index
+data/external/workbook_v7_mapping_crosswalk.md       — sheet → entity mapping context
+data/external/workbook_v7_classification_checklist.csv
+data/external/workbook_v7_sheet_to_entity.csv
+configs/workbook_v7_manifest_local.yaml              — target for rule injection
+```
+
+### Phases
+
+**Phase A — Authoring (human task)**
+
+Open `data/external/workbook_v7_rule_authoring_pilot.csv`.
+For each row, fill in the classification columns:
+
+| Column | Values |
+|---|---|
+| `proposed_action` | `classify` \| `exclude` \| `ignore` |
+| `direction` | `inflow` \| `outflow` |
+| `distributable_candidate` | `true` \| `false` |
+| `restricted` | `true` \| `false` |
+| `recurrence_type` | `recurring` \| `one_time` \| `unknown` |
+| `certainty` | `actual` \| `contractual` \| `forecast` \| `scenario` |
+| `domain` | `real_estate` \| `opco` \| `entity` \| `portfolio` \| `development` \| `land` |
+
+Decision guide for `proposed_action`:
+- `classify` — a real cash-flow row; needs a `RowClassificationRule`.
+- `exclude` — a subtotal, running total, or section header; no rule needed
+  (already suppressed by `subtotal_label_patterns: ["total"]` for rows
+  matching "total"; mark `exclude` for others).
+- `ignore` — a metadata, spacer, or structural label with no cash-flow
+  values; skip entirely.
+
+`distributable_candidate` guidance:
+- RE / OpCo distribution inflows from external investments → user judgment;
+  typically `true` for income-producing distributions.
+- Capital calls, contributions, restricted reserves → `false`.
+- Intra-entity transfers → `false` unless the receiving entity is the
+  family office principal layer.
+
+`restricted` guidance:
+- Mark `true` only when the cash flow is legally or contractually
+  unavailable to the family office — e.g., escrowed reserves, co-invest
+  return of capital pending closing, entity-level restricted distributions.
+
+`certainty` guidance:
+- `actual` — historical; value has settled.
+- `contractual` — committed; terms locked.
+- `forecast` — projected; may change.
+- `scenario` — stress or alternative case.
+
+**Phase B — Translation and manifest injection (Claude-assisted)**
+
+Trigger: user sends `go — validate completed pilot row-classification worksheet`.
+
+Claude will:
+1. Read the completed pilot CSV (no values, no labels surfaced in chat).
+2. Translate filled `classify` rows into `RowClassificationRule` entries.
+3. Apply rules to the 33 unclassified entity sheets in the local manifest.
+4. Run live ingestion → report new `unmatched_lines_count` and category
+   breakdown (aggregate counts only — no labels or values in chat).
+5. Flag any rows where the pattern produced 0 matches (possible typo or
+   case mismatch).
+
+**Phase C — Iteration**
+
+Repeat Phase B until `unmatched_lines_count` reaches an acceptable floor.
+Acceptable floor = rows where `proposed_action == exclude` or `ignore` in
+the pilot (structural rows that genuinely carry no cash-flow data). These
+will remain `unknown` category in ingestion output by design.
+
+**Phase D — Full ingestion review**
+
+Once unmatched count is at floor, run a coverage review:
+
+1. `distributable_candidate` totals by domain and quarter — sanity-check
+   the distributable income profile.
+2. `restricted` exclusion count — confirm restricted rows are not leaking
+   into distributable totals.
+3. Board-snapshot reconciliation deltas — advisory only; large unexplained
+   deltas should be noted.
+4. `capital_call` coverage window — confirm next-12m calls are still
+   present (regression check on Phase 14.3 / L20 path).
+5. Category breakdown — all lines should have a non-`unknown` category
+   after Phase B.
+
+**Phase E — L19 resolution gate**
+
+Gate criteria (all must pass):
+- [ ] `unmatched_lines_count` ≤ intentional floor (structural rows only).
+- [ ] All classified lines have non-`unknown` category.
+- [ ] `distributable_candidate` totals reviewed and accepted.
+- [ ] `restricted` exclusions reviewed and accepted.
+- [ ] Board-snapshot deltas reviewed (advisory pass — not a hard blocker).
+- [ ] `capital_call` regression check passes.
+
+On gate pass:
+- Update L19 status: **RESOLVED** with wording "RESOLVED for modeled
+  distributable-income ingestion; legal / tax / entity-governance
+  distributability remains out of scope."
+- Commit docs-only entry to `MODEL_DOCUMENTATION.md`.
+- Local manifest and authoring artifacts remain local/private (never commit).
+
+### What does NOT change
+
+- No code changes in this phase.
+- No workbook mutation.
+- No live values, client entity names, or row labels in any committed
+  artifact.
+- `subtotal_label_patterns: ["total"]` remains the manifest-level subtotal
+  suppressor; extend it in the manifest only if a subtotal pattern is
+  systematically missed across multiple sheets.
+- The 4 scoped PB Westplan specs (entity_27, entity_27b, entity_28,
+  entity_28b) may retain unmatched rows from the non-capital-call portion
+  of their contributions section; those are acceptable at L19 if their
+  `distributable_candidate` and `restricted` profile is confirmed correct.
+- The 2 `display_only` entity sheets require no rules.
