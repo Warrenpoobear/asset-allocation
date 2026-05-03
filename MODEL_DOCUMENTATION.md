@@ -95,10 +95,10 @@ queue a separate phase to address it.
   rate-based Guyton-Klinger semantics, which is scale-invariant
   by design. **L16 closure does NOT address spending-base
   realism — Owl still measures rate against total NAV.**
-* **L19 (PARTIALLY RESOLVED, Phase 12 + Phase 12.5 + Phase 13)** —
-  spending-rule denominator **infrastructure** complete on both
-  sides AND a **config-driven producer** for distribution_inflow
-  rows is shipped.
+* **L19 (PARTIALLY RESOLVED, Phase 12 + 12.5 + 13 + 14)** —
+  spending-rule denominator infrastructure complete (Phase 12 +
+  12.5); config-driven producer (Phase 13) AND workbook-driven
+  producer + ingestor (Phase 14) shipped.
   Phase 12 (commit `92c327d`) shipped the base-side: four
   configurable modes (`total_nav` default, `liquid_nav`,
   `liquid_plus_income_producing_nav`, `custom_policy`). Phase 12.5
@@ -606,7 +606,7 @@ doesn't have to skim eighteen entries to know what's open.
 | L16 | Owl is scale-invariant in initial NAV | **RESOLVED** | Phase 11 (optional absolute-dollar clamps in `GuardrailConfig`) |
 | L17 | Cross-engine metric comparability is not meaningful | **ACCEPTED LIMITATION** | Phase 10 consolidation — interpretation problem, not architecture |
 | L18 | Owl misreads inflation shock as "headroom" and raises spending | **RESOLVED** | Phase 4a |
-| L19 | Spending base realism for illiquid SFO balance sheets | **PARTIALLY RESOLVED** | Phase 12 + 12.5 + 13 — spending-rule denominator infrastructure + config-driven producer complete; workbook-driven realism producer-dependent (Phase 14) |
+| L19 | Spending base realism for illiquid SFO balance sheets | **PARTIALLY RESOLVED** | Phase 12 + 12.5 + 13 + 14 — full ingestion stack shipped (consumer + producer + workbook ingestor); RESOLVED only after a clean local validation pass against the real workbook + narrowed wording (legal/tax/governance distributability remains out of scope) |
 
 #### Status definitions
 
@@ -1373,13 +1373,20 @@ The original Phase 3c text follows for audit-trail purposes:
   absolute dollar guardrails; switching to an absolute-dollar guardrail
   is a real-world refinement but doesn't qualify as Phase 3c minimum.
 
-### L19 — Spending base realism for illiquid SFO balance sheets — [PARTIALLY RESOLVED 2026-05-02, Phase 12 + Phase 12.5 + Phase 13]
+### L19 — Spending base realism for illiquid SFO balance sheets — [PARTIALLY RESOLVED 2026-05-03, Phase 12 + Phase 12.5 + Phase 13 + Phase 14]
 
-> **Status: PARTIALLY RESOLVED in Phase 12 + Phase 12.5 + Phase 13.**
-> Spending-rule denominator infrastructure complete (both sides);
-> config-driven producer for distribution_inflow rows shipped.
-> Workbook-driven realism (``Cashflow Modeling v7.xlsx`` + entity
-> schema) remains dependent on Phase 14.
+> **Status: PARTIALLY RESOLVED in Phase 12 + Phase 12.5 + Phase 13
+> + Phase 14.** Full ingestion stack shipped: consumer-side base
+> infrastructure (Phase 12 + 12.5) + producer-side seat (Phase 13
+> config-driven, Phase 14 workbook-driven). The model can now
+> ingest ``Cashflow Modeling v7.xlsx`` as a read-only integration
+> target, normalize entity + cash-flow tables, and bridge
+> qualifying lines into ``distribution_inflow`` rows that Owl's
+> ``distributable_income`` spending base consumes. **L19 flips
+> to RESOLVED only after a clean local validation pass against the
+> real workbook**, with wording narrowed to "RESOLVED for modeled
+> distributable-income ingestion; legal / tax / entity-governance
+> distributability remains out of scope."
 >
 > **Producer-side (Phase 13):** new ``DistributionProducer`` ABC
 > with ``ConfigDrivenProducer`` adapter; ``DistributionProducerConfig``
@@ -9508,3 +9515,105 @@ future spending- and liquidity-related modeling work.
   (Cashflow Modeling v7.xlsx + entity schema). L19 flips to
   RESOLVED only after Phase 14 producers exist and the SFO can
   run end-to-end on real household income data.
+
+### 2026-05-03 — Phase 14 design-lock + reviewer tightenings
+
+* **What.** Two docs-only commits (``52721fb``, ``cdd73c4``) adding
+  the ``## Phase 14 design (pre-implementation) — cash-flow workbook
+  and entity ingestion`` block to ``MODEL_DOCUMENTATION.md``, then
+  applying four reviewer tightenings.
+* **Tightenings.**
+  - (1) Stale formula / cache risk surfaced as standing CAVEAT in
+    the report + ``IngestionDiagnostics.formula_cache_caveat``.
+  - (2) ``workbook_version`` REQUIRED on
+    ``WorkbookManifestConfig``; URL-safe; used in deterministic
+    producer_id; workbook_hash captured for provenance but NOT in
+    producer_id.
+  - (3) Board-snapshot reconciliation is ADVISORY ONLY; no strict
+    mode in Phase 14.
+  - (4) Tests use synthetic workbook fixtures only; no real
+    workbook rows / live values / person-level data committed.
+* L19 status narrowed: stays at PARTIALLY RESOLVED on Phase 14
+  implementation alone; promotion to RESOLVED is operational.
+* **Tests.** Docs-only; zero code change.
+* **Backward-compatible.** Yes — design only.
+
+### 2026-05-03 — Phase 14 implementation: cash-flow workbook + entity ingestion
+
+* **What.** Implements the design-lock above as one cohesive
+  commit. New package ``src/aa_model/ingestion/`` with:
+  - ``schemas.py``: ``EntityRecord``, ``CashFlowLineRecord``,
+    ``RowClassificationRule``, ``EntitySheetSpec``,
+    ``REPartnershipSheetSpec``, ``WorkbookManifestConfig``,
+    ``IngestionDiagnostics``, ``IngestionResult``. Hard validators
+    enforce URL-safe ids/version (no colons), finite amounts, sign
+    convention, distributable_candidate-requires-domain.
+  - ``workbook.py``: ``ingest_workbook`` opens via
+    ``openpyxl(read_only=True, data_only=True, keep_links=False)``;
+    SHA256 hashes the raw .xlsx bytes for provenance; parses period
+    headers in four formats (yyyy_q / q_yy / q_yyyy / calendar_qe);
+    excludes subtotal rows by manifest pattern; matches row labels
+    to ``RowClassificationRule`` instances first-match-wins;
+    enforces sign convention at ``CashFlowLineRecord`` construction;
+    runs board-snapshot reconciliation as ADVISORY ONLY (Phase 14
+    RT3). ``workbook_lines_to_producer_config`` is a SEPARATE
+    named bridge function that converts qualifying lines into a
+    ``DistributionProducerConfig`` with deterministic producer_id =
+    ``f"{workbook_version}__{sheet}__{row_label}__{quarter}"``
+    (workbook_version-anchored per RT2; hash NOT in producer_id).
+  - ``workbook_producer.py``: ``WorkbookDrivenProducer`` adapter
+    satisfies the Phase 13 ``DistributionProducer`` ABC by
+    delegating to ``ConfigDrivenProducer`` on the workbook-derived
+    config. ``make_distribution_producer`` factory extends with
+    ``engine="workbook"``.
+- ``StudyConfig.workbook_ingestion`` (optional, default None).
+  Orchestrator runs ingestion → bridge → workbook producer when
+  configured; otherwise behaves identically to Phase 13.
+- New ``## Workbook ingestion (advisory)`` report section composes
+  with Phase 12.5 + Phase 13 advisory sections; carries the
+  standing CAVEAT for cached-formula stale-state risk on every
+  ingestion run (Phase 14 RT1).
+* **Why.** Closes the workbook-driven half of L19's producer seat.
+  The model can now run end-to-end on the household's actual
+  operating cash-flow forecast (Cashflow Modeling v7.xlsx) instead
+  of only on hand-authored config. The workbook is treated as a
+  read-only integration target — never mutated, never committed.
+* **Reviewer tightenings.**
+  - RT1: ``IngestionDiagnostics.formula_cache_caveat`` carries the
+    standing advisory text; rendered on every ingestion run.
+  - RT2: ``WorkbookManifestConfig.workbook_version`` is required +
+    URL-safe; producer_id uses workbook_version, NOT workbook_hash.
+  - RT3: Reconciliation deltas surface as advisory entries; never
+    raise.
+  - RT4: All Phase 14 tests build their own openpyxl workbooks at
+    test time in tmp_path. NO real workbook rows / values / person
+    or entity names committed under tests/. The real
+    ``Cashflow Modeling v7.xlsx`` is for local validation only.
+* **Files touched.** ``src/aa_model/ingestion/__init__.py`` (NEW);
+  ``src/aa_model/ingestion/schemas.py`` (NEW);
+  ``src/aa_model/ingestion/workbook.py`` (NEW);
+  ``src/aa_model/ingestion/workbook_producer.py`` (NEW);
+  ``src/aa_model/io/schemas.py`` (WorkbookIngestionConfig +
+  StudyConfig field);
+  ``src/aa_model/producers/distribution.py`` (engine="workbook"
+  factory branch); ``src/aa_model/integration/orchestrator.py``
+  (ingestion wiring + producer dispatch + return-tuple extension);
+  ``src/aa_model/integration/report.py`` (new advisory section);
+  ``tests/test_phase14_workbook_ingestion.py`` (NEW — 12 tests,
+  synthetic fixtures only); ``tests/test_phase13_distribution_producer.py``
+  (factory dispatch test updated — engine="workbook" now valid).
+  ``MODEL_DOCUMENTATION.md`` (L19 status + this entry).
+* **Tests.** 12 new Phase 14 tests + 265 baseline = **277 passed**.
+  Default-off byte-stability verified (cfg.workbook_ingestion =
+  None ⇒ Phase 13 trajectories byte-identical).
+* **Backward-compatible.** Yes. Existing fixtures, configs, and
+  trajectories byte-identical to Phase 13.
+* **L19.** Stays at ``[PARTIALLY RESOLVED 2026-05-03, Phase 12 +
+  12.5 + 13 + 14]``. Wording: full ingestion stack shipped; L19
+  flips to RESOLVED only after a clean local validation pass
+  against the real workbook AND wording narrowed to "RESOLVED for
+  modeled distributable-income ingestion; legal / tax / entity-
+  governance distributability remains out of scope." Promotion is
+  operational, not implementational — a separate docs-only commit
+  performs that flip after the reviewer confirms the validation
+  pass.

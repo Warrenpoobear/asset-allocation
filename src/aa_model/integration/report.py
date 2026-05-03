@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from aa_model.allocation.liquidity_overlay import LiquidityOverlayDiagnostics
     from aa_model.assumptions.cma import CMA
     from aa_model.assumptions.correlation_shock import CorrelationShockDiagnostics
+    from aa_model.ingestion.schemas import IngestionResult
     from aa_model.producers.distribution import DistributionProducerDiagnostics
 
 
@@ -49,6 +50,7 @@ def write_markdown_report(
     overlay_history: list[tuple[str, LiquidityOverlayDiagnostics]] | None = None,
     spending_diagnostics: dict | None = None,
     distribution_producer_diagnostics: DistributionProducerDiagnostics | None = None,
+    workbook_ingestion_result: IngestionResult | None = None,
 ) -> None:
     end_nav = ledger.end_nav_by_quarter()
     initial_total = sum(ledger.initial_nav.values())
@@ -1051,6 +1053,100 @@ def write_markdown_report(
             "are treated as already approved, distributable, and payable "
             "to the modeled liquidity pool (Phase 13 reviewer tightening "
             "1)._"
+        )
+        lines.append("")
+
+    # Workbook ingestion (Phase 14 / L19 workbook-side). Composes
+    # with Phase 12.5 + Phase 13 advisory sections — readers see the
+    # full provenance chain: workbook → producer → spending base →
+    # trajectory. Gated on an ingestion having run.
+    if workbook_ingestion_result is not None:
+        wir_diag = workbook_ingestion_result.diagnostics
+        lines.append("## Workbook ingestion (advisory)")
+        lines.append("")
+        lines.append("- workbook:")
+        lines.append(f"  - filename: {wir_diag.workbook_filename}")
+        lines.append(f"  - hash: {wir_diag.workbook_hash[:16]}…")
+        lines.append(f"  - workbook_version (manifest): {wir_diag.workbook_version}")
+        lines.append(f"  - manifest_version: {wir_diag.manifest_version}")
+        lines.append("- sheets:")
+        lines.append(f"  - ingested: {len(wir_diag.sheets_ingested)}")
+        if wir_diag.unmapped_sheets:
+            lines.append(
+                f"  - unmapped: {len(wir_diag.unmapped_sheets)} "
+                f"({', '.join(repr(s) for s in wir_diag.unmapped_sheets[:3])}"
+                + (
+                    f", … +{len(wir_diag.unmapped_sheets) - 3} more"
+                    if len(wir_diag.unmapped_sheets) > 3
+                    else ""
+                )
+                + ")"
+            )
+        if wir_diag.missing_optional_sheets:
+            lines.append(
+                f"  - missing optional: {len(wir_diag.missing_optional_sheets)}"
+            )
+        lines.append("- rows:")
+        lines.append(f"  - parsed (data lines): {len(workbook_ingestion_result.cash_flow_lines)}")
+        lines.append(f"  - blank skipped: {wir_diag.blank_rows_skipped}")
+        lines.append(f"  - subtotal excluded: {wir_diag.excluded_subtotal_rows}")
+        if wir_diag.unparseable_period_headers:
+            lines.append(
+                f"  - unparseable period headers: {len(wir_diag.unparseable_period_headers)}"
+            )
+        if wir_diag.total_inflows_usd_by_entity:
+            lines.append("- per-entity inflow totals (run horizon):")
+            for entity_id in sorted(wir_diag.total_inflows_usd_by_entity.keys()):
+                amt = float(wir_diag.total_inflows_usd_by_entity[entity_id])
+                lines.append(f"  - {entity_id}: ${amt:,.0f}")
+        if wir_diag.board_snapshot_reconciliations:
+            lines.append("- board-snapshot reconciliation (advisory):")
+            for label, snap, det, abs_d, abs_pct in wir_diag.board_snapshot_reconciliations:
+                tag = " — within tolerance" if abs_pct <= 0.5 else " — **WARNING (>0.5%)**"
+                lines.append(
+                    f"  - {label!r}: snapshot=${snap:,.0f}  detail=${det:,.0f}  "
+                    f"Δ={abs_pct:.2f}%{tag}"
+                )
+        if wir_diag.distribution_candidates_count > 0:
+            lines.append("- distribution candidates (bridge to Phase 13 producer):")
+            lines.append(f"  - count: {wir_diag.distribution_candidates_count} entries")
+            if wir_diag.distribution_candidates_by_domain_usd:
+                lines.append("  - by domain:")
+                for dom in sorted(wir_diag.distribution_candidates_by_domain_usd.keys()):
+                    amt = float(wir_diag.distribution_candidates_by_domain_usd[dom])
+                    lines.append(f"    - {dom}: ${amt:,.0f}")
+            if wir_diag.excluded_restricted_count > 0:
+                lines.append(
+                    f"  - excluded (restricted=True): "
+                    f"{wir_diag.excluded_restricted_count} entries "
+                    f"(${wir_diag.excluded_restricted_usd:,.0f})"
+                )
+        if wir_diag.unmatched_lines_count > 0:
+            lines.append(
+                f"- unmatched lines: {wir_diag.unmatched_lines_count} "
+                "— **WARNING; see ingestion log for triage**"
+            )
+            if wir_diag.unmatched_lines_sample:
+                lines.append("  - sample:")
+                for s in wir_diag.unmatched_lines_sample[:5]:
+                    lines.append(f"    - {s}")
+        # Phase 14 reviewer tightening 1: standing CAVEAT for cached-
+        # formula stale-state risk. Always rendered.
+        lines.append("")
+        lines.append(f"_**CAVEAT:** {wir_diag.formula_cache_caveat}_")
+        lines.append("")
+        lines.append(
+            "_Phase 14 ingests ``Cashflow Modeling v7.xlsx`` as a "
+            "read-only integration target. The workbook itself is "
+            "never mutated. Workbook classifications (distributable, "
+            "restricted, recurring vs one-time, certainty) flow "
+            "through the manifest's row-classification rules into "
+            "the Phase 13 producer unchanged. Phase 14 does NOT "
+            "determine legal / tax / entity-governance "
+            "distributability; it transcribes the manifest-mapped "
+            "human classifications. Board-snapshot reconciliation "
+            "deltas are advisory only (Phase 14 reviewer tightening "
+            "3); they never block a run._"
         )
         lines.append("")
 

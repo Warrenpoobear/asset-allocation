@@ -1053,6 +1053,43 @@ class DistributionProducerConfig(BaseModel):
         return self
 
 
+# ---- workbook ingestion (Phase 14 / L19 workbook-side) ---------------------
+
+
+class WorkbookIngestionConfig(BaseModel):
+    """Phase 14 / L19 workbook ingestion config.
+
+    Bundles a workbook path with a Phase 14 ``WorkbookManifestConfig``
+    (imported lazily so the io.schemas module has no openpyxl /
+    ingestion dependency at top level). When this config is set on
+    StudyConfig, the orchestrator runs ingestion before the per-quarter
+    loop, derives a DistributionProducerConfig via the bridge
+    function, and constructs a WorkbookDrivenProducer (engine="workbook").
+
+    Default-off byte-stable: cfg.workbook_ingestion = None ⇒ no
+    ingestion ⇒ Phase 13 trajectories byte-identical.
+    """
+
+    model_config = _STRICT
+    workbook_path: str = Field(min_length=1)        # absolute or
+                                                     # repo-relative path
+    manifest_version: str = Field(default="1", min_length=1)
+    # The full WorkbookManifestConfig — typed as Any here because
+    # importing the ingestion-side schema would create an inversion
+    # (io.schemas → ingestion.schemas would tangle the import graph).
+    # Validated structurally by the orchestrator at ingestion time.
+    manifest: dict = Field(default_factory=dict)
+
+    @field_validator("manifest_version")
+    @classmethod
+    def _manifest_version_url_safe(cls, v: str) -> str:
+        if ":" in v:
+            raise ValueError(
+                f"manifest_version must be URL-safe (no colons); got {v!r}"
+            )
+        return v
+
+
 # ---- top-level resolved view ------------------------------------------------
 
 
@@ -1071,6 +1108,10 @@ class StudyConfig(BaseModel):
     # "no producer wired" — orchestrator emits zero distribution_inflow
     # rows; Phase 12.5 trajectories byte-identical.
     distribution_producer: DistributionProducerConfig | None = None
+    # Phase 14 / L19 workbook-side: optional. Default None means
+    # "no workbook ingestion" — orchestrator skips ingestion entirely;
+    # Phase 13 trajectories byte-identical.
+    workbook_ingestion: WorkbookIngestionConfig | None = None
 
     @model_validator(mode="after")
     def _phase12_spending_base_cross_config(self) -> StudyConfig:

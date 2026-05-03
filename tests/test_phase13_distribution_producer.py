@@ -270,14 +270,16 @@ def test_duplicate_source_quarter_allowed_when_producer_id_unique():
 
 
 def test_factory_engine_dispatch():
-    """Phase 13 #10: factory returns ConfigDrivenProducer for engine='config'."""
+    """Phase 13 #10: factory returns ConfigDrivenProducer for engine='config'.
+    Phase 14 added engine='workbook' (returns WorkbookDrivenProducer).
+    Unknown engines still fail loud."""
     cfg = DistributionProducerConfig(entries=[_entry(producer_id="p1")])
     p = make_distribution_producer(cfg, engine="config")
     assert isinstance(p, ConfigDrivenProducer)
 
-    # Unknown engine fails loud (e.g., Phase 14 placeholder).
+    # Unknown engine fails loud.
     with pytest.raises(ValueError, match="unknown distribution producer engine"):
-        make_distribution_producer(cfg, engine="workbook")
+        make_distribution_producer(cfg, engine="not_a_real_engine")
 
 
 def test_owl_distributable_income_runs_with_producer_feed():

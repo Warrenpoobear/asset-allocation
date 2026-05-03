@@ -96,6 +96,7 @@ def run_orchestrator(
         overlay_history,
         spending_diagnostics,
         distribution_producer_diagnostics,
+        workbook_ingestion_result,
     ) = _build_ledger(cfg, run_id)
     ledger.validate(expected_externals_by_quarter=expected_externals)
 
@@ -121,6 +122,7 @@ def run_orchestrator(
             overlay_history=overlay_history,
             spending_diagnostics=spending_diagnostics,
             distribution_producer_diagnostics=distribution_producer_diagnostics,
+            workbook_ingestion_result=workbook_ingestion_result,
         )
         outputs.append("report.md")
         outputs.append("manifest.json")
@@ -156,6 +158,8 @@ def _build_ledger(
     list[tuple[str, LiquidityOverlayDiagnostics]],
     dict | None,
     DistributionProducerDiagnostics | None,
+    object | None,  # IngestionResult | None — typed loosely to keep
+                    # io/schemas clean of an ingestion dependency.
 ]:
     start_q = pd.Period(cfg.base.horizon.start_quarter, freq="Q-DEC")
     n_q = cfg.base.horizon.num_quarters
@@ -233,12 +237,46 @@ def _build_ledger(
     overlay_diagnostics_history: list[tuple[str, LiquidityOverlayDiagnostics]] = []
     ext_inflow_amt = float(cfg.fixture_scenario.external_inflows.default_quarterly_usd)
 
-    # Phase 13 / L19 producer-side: construct the distribution producer
-    # if configured, else None. Default-off behavior preserves Phase
-    # 12.5 trajectories byte-identical (zero distribution_inflow rows).
+    # Phase 14 / L19 workbook-side: run ingestion if configured. The
+    # ingestor produces normalized entity + cash-flow tables AND a
+    # candidate DistributionProducerConfig via the bridge function.
+    # When cfg.workbook_ingestion is None, ingestion is skipped and
+    # Phase 13 producer-config wiring (if any) takes over below.
+    workbook_ingestion_result = None
+    workbook_derived_producer_config = None
+    if cfg.workbook_ingestion is not None:
+        from aa_model.ingestion.schemas import WorkbookManifestConfig
+        from aa_model.ingestion.workbook import (
+            ingest_workbook,
+            workbook_lines_to_producer_config,
+        )
+        manifest = WorkbookManifestConfig.model_validate(
+            cfg.workbook_ingestion.manifest
+        )
+        workbook_ingestion_result = ingest_workbook(
+            cfg.workbook_ingestion.workbook_path,
+            manifest,
+            manifest_version=cfg.workbook_ingestion.manifest_version,
+        )
+        workbook_derived_producer_config = workbook_lines_to_producer_config(
+            workbook_ingestion_result, manifest
+        )
+
+    # Phase 13 / L19 producer-side: construct the distribution producer.
+    # Phase 14 / L19 workbook-side: workbook-derived config takes
+    # precedence over an explicit cfg.distribution_producer when both
+    # are set (the workbook is the source of truth in that case).
+    # Default-off behavior preserves Phase 13 / 12.5 trajectories
+    # byte-identical (zero distribution_inflow rows when neither path
+    # is configured).
     producer: DistributionProducer | None = None
     distribution_producer_diagnostics: DistributionProducerDiagnostics | None = None
-    if cfg.distribution_producer is not None:
+    if workbook_derived_producer_config is not None:
+        producer = make_distribution_producer(
+            workbook_derived_producer_config, engine="workbook"
+        )
+        distribution_producer_diagnostics = DistributionProducerDiagnostics()
+    elif cfg.distribution_producer is not None:
         producer = make_distribution_producer(
             cfg.distribution_producer, engine="config"
         )
@@ -449,6 +487,7 @@ def _build_ledger(
         overlay_diagnostics_history,
         spending_diagnostics,
         distribution_producer_diagnostics,
+        workbook_ingestion_result,
     )
 
 

@@ -291,12 +291,21 @@ def make_distribution_producer(
 ) -> DistributionProducer:
     """Factory for the producer adapter family.
 
-    Phase 13 ships ``engine="config"``. Phase 14 will add
-    ``engine="workbook"`` (Cashflow Modeling v7.xlsx ingestion).
+    Phase 13 ships ``engine="config"``; Phase 14 added
+    ``engine="workbook"`` (the workbook-derived
+    :class:`DistributionProducerConfig` produced by
+    :func:`aa_model.ingestion.workbook.workbook_lines_to_producer_config`
+    is consumed here).
     """
     if engine == "config":
         return ConfigDrivenProducer(cfg)
+    if engine == "workbook":
+        # Local import to avoid a circular dependency: ingestion/
+        # imports the producer module; the producer factory only
+        # imports ingestion when the workbook engine is selected.
+        from aa_model.ingestion.workbook_producer import WorkbookDrivenProducer
+        return WorkbookDrivenProducer(cfg)
     raise ValueError(
         f"unknown distribution producer engine {engine!r}; "
-        f"valid: ['config']  (workbook lands in Phase 14)"
+        f"valid: ['config', 'workbook']"
     )
