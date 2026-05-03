@@ -11242,10 +11242,8 @@ tests/test_phase21_reconciliation_gates.py       (new, synthetic only)
   classification rules. No live workbook content.
 * **Backward-compatible.** Yes — pure documentation addition. Default
   configs and trajectories byte-identical.
-* **L19 / L20.** Both held at PARTIALLY RESOLVED. The doc is the
-  prerequisite write-up for the operational milestones; the milestones
-  themselves (locally-authored manifest + clean live ingestion run) are
-  not affected by this commit.
+* **L19 / L20.** L19 held at PARTIALLY RESOLVED. L20 subsequently
+  RESOLVED (2026-05-03) — see "L20 resolution" section.
 
 ## Phase 22 design-lock — manager terms consumer / diagnostic layer
 
@@ -11528,3 +11526,49 @@ The reviewer may apply tightenings; the following are pre-flagged:
 Full suite after Phase 14.3: **332 passed, 6 skipped** (8 new tests added to prior 324).
 
 **Implementation note (2026-05-03):** One additional fix was required during the test run: `ingest_workbook()` was building `entity_specs` as a `dict[str, EntitySheetSpec]` keyed by `sheet_name`, causing the second spec for a shared sheet to clobber the first. Fixed by switching to set-based membership checks for required/unmapped detection and iterating `manifest.entity_sheets` directly for ingestion. The existing Phase 14 `test_manifest_validators` match pattern "sheet names must be globally unique" was updated to "cross-role duplicates" to align with the revised cross-role validator message.
+
+---
+
+## L20 resolution — workbook-driven capital-call obligation (2026-05-03)
+
+**Status: RESOLVED for the workbook-driven capital-call obligation source.**
+
+### Basis
+
+Local validation (not committed — live values, client entity names, and
+manifest specifics remain local/private) confirmed:
+
+1. `category="capital_call"` workbook lines produced — count > 0.
+2. Lines fall inside the next-12m coverage window.
+3. `reconcile_call_obligation` resolved `source_used="cashflow_workbook"`.
+4. `next_12m_capital_calls_usd` is nonzero.
+
+PE pacing is now serving as the reconciliation cross-check rather than the
+primary obligation source.
+
+### How it was unblocked
+
+Phase 14.3 `row_range` scoping (commit `82ce2ec`) was the enabling change.
+The sheets requiring capital-call ingestion each contain two investor
+sections with identical row labels — a layout that the dedup key
+`(entity_id, quarter, row_label)` cannot resolve with a single spec.
+Declaring each section as a separate scoped spec with non-overlapping
+`row_range` and a distinct `entity_id` resolved the collision without
+mutating the workbook.
+
+An additional narrowing was required at the local-manifest level: covering
+only the "Contributions from partners" subsection of each investor section
+(not the full section) avoids a second layer of label duplication that
+exists between the "Distributions to partners" and "Contributions from
+partners" sub-blocks within each section.
+
+### Remaining open gates
+
+- **L19** — PARTIALLY RESOLVED. Row classification for 33 entity sheets
+  is the outstanding operational milestone. Human authoring of
+  `row_classification_rules` in the local manifest is required; no further
+  code is needed.
+- **L2 / Monte Carlo** — deferred. Stochastic layer not started.
+- **L19 RESOLVED wording** (when reached): narrowed to "RESOLVED for
+  modeled distributable-income ingestion; legal / tax / entity-governance
+  distributability remains out of scope."
