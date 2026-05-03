@@ -264,7 +264,7 @@ def test_manifest_validators():
         )
 
     # Duplicate sheet name across roles → fail.
-    with pytest.raises(ValidationError, match="sheet names must be globally unique"):
+    with pytest.raises(ValidationError, match="cross-role duplicates"):
         WorkbookManifestConfig(
             workbook_version="v1",
             expected_workbook_filename="x.xlsx",

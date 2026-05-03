@@ -11358,3 +11358,173 @@ fixtures only. No live workbook. All tests green.
 
 Full suite: 368 passed, 0 failures (4 pre-existing cvxportfolio failures
 now resolved by the new test environment; prior baseline was 298 + 4 failures).
+
+---
+
+## Phase 14.3 design — workbook row-scope / data-region support
+
+**Status: shipped**
+
+### Motivation
+
+L20 live validation requires `category="capital_call"` records in the
+`2026Q2–2027Q1` coverage window. The only workbook entities with 2026+
+quarterly capital-call data are `entity_27` (PB Westplan) and `entity_28`
+(PB Westplan v2). Both sheets contain two investor sections (e.g., "Westplan
+partners" rows 5–44 and "SE Holland Investors" rows 47–94) with identical
+deal-name row labels repeated in each section. The current ingestor dedup key
+`(entity_id, quarter, row_label)` cannot distinguish section-1 from section-2
+when the same label appears in the same quarter, so ingestion raises
+`ValueError: duplicate (entity_id, quarter, row_label)`.
+
+Workbook mutation is out of scope. The fix is a manifest-side scoping field:
+allow a sheet to be declared multiple times with non-overlapping row ranges so
+each section becomes its own logical entity with a unique `entity_id`.
+
+### What changes
+
+**1. `EntitySheetSpec` — new optional field**
+
+```python
+row_range: tuple[int, int] | None = Field(default=None)
+```
+
+- 1-indexed, inclusive bounds: `[start_row, end_row]`.
+- `None` (default) → no scoping; existing behavior byte-identical.
+- YAML spelling: `row_range: [5, 44]`.
+- Field validator: `start >= 1`, `end >= start`.
+- Does NOT change `header_row_index` semantics; the header row is always
+  read from its declared index regardless of `row_range`.
+
+**2. `WorkbookManifestConfig` validators — two changes**
+
+*a. `_sheet_names_globally_unique` — relaxed for entity/RE sheets:*
+
+A `sheet_name` may appear more than once within `entity_sheets` +
+`re_partnership_sheets` if and only if all non-`display_only` specs for
+that sheet have `row_range` set (enforced by the new
+`_multi_sheet_row_ranges_valid` validator). The family_aggregate and
+board_snapshot uniqueness rules are unchanged. Cross-role uniqueness
+(entity/RE names may not appear in family_aggregate or board_snapshot) is
+unchanged.
+
+*b. New validator `_multi_sheet_row_ranges_valid`:*
+
+For each `sheet_name` appearing more than once across `entity_sheets` +
+`re_partnership_sheets`:
+- Every non-`display_only` spec must have `row_range` set.
+- Non-`display_only` row ranges must be non-overlapping: after sorting by
+  `row_range[0]`, every `row_range[1]` must be strictly less than the next
+  `row_range[0]`.
+- `display_only` specs in the same group are exempt from row_range
+  (they produce no rows so there is no dedup risk).
+
+Clear error messages on violation (entity_ids + conflicting ranges, but NOT
+sheet contents).
+
+**3. `_ingest_entity_sheet` — row-range filtering**
+
+After resolving `header_row_index`, apply row-scope:
+
+```
+if spec.row_range is not None:
+    rr_start, rr_end = spec.row_range
+    # Runtime guard: range must fall inside the body (after the header).
+    if rr_start <= effective_header_row_index:
+        raise ValueError(...)
+    body_rows = rows[rr_start - 1 : rr_end]   # 0-indexed slice
+    row_idx_offset = rr_start                  # 1-indexed, for diagnostics
+else:
+    body_rows = rows[body_start:]              # body_start = header_row_index
+    row_idx_offset = body_start + 1
+```
+
+`row_idx` in diagnostics (unmatched samples, duplicate errors) always uses
+the original worksheet row number, so row positions remain stable across
+manifest edits.
+
+The `seen_keys` set `(entity_id, quarter, row_label)` is scoped to a single
+`_ingest_entity_sheet` call. Since each scoped spec has a distinct
+`entity_id`, there is no cross-spec collision; within a single scoped range
+the dedup still fires on any genuine duplicate.
+
+### What does NOT change
+
+- Read-only workbook contract (no mutations).
+- `header_row_index` resolution (spec → manifest default → 1).
+- Column header parsing and `column_quarters` mapping (global to the sheet).
+- `seen_keys` dedup logic within a single spec invocation.
+- `entity_id` global-uniqueness validator (`_entity_ids_globally_unique`).
+- `REPartnershipSheetSpec` inherits `row_range` from `EntitySheetSpec`
+  without any additional changes.
+- All existing manifests without `row_range` are byte-stable.
+- L20 coverage engine, reconciliation gates, Phase 22 diagnostics:
+  all unchanged.
+
+### L20 manifest usage after Phase 14.3
+
+`configs/workbook_v7_manifest_local.yaml` will replace the current
+`display_only` declarations:
+
+```yaml
+- sheet_name: PB Westplan
+  entity_id: entity_27a
+  display_name: entity_27a (PB Westplan — Westplan partners section)
+  row_range: [5, 44]
+  row_classification_rules:
+    - row_label_pattern: "remaining new deals' from 2025-2028 budget"
+      category: capital_call
+      direction: outflow
+      ...
+
+- sheet_name: PB Westplan
+  entity_id: entity_27b
+  display_name: entity_27b (PB Westplan — SE Holland section)
+  row_range: [47, 94]
+  row_classification_rules:
+    - row_label_pattern: "remaining new deals' from 2025-2028 budget"
+      category: capital_call
+      direction: outflow
+      ...
+```
+
+Row labels that appear in both sections (same deal name) are now keyed on
+different `entity_id` values, eliminating the dedup collision.
+
+### Design tightenings before implementation
+
+The reviewer may apply tightenings; the following are pre-flagged:
+
+1. **Row-range bounds inclusive vs exclusive** — inclusive `[start, end]`
+   mirrors Excel row numbering and is less error-prone than exclusive end.
+   Implementation should document this explicitly.
+
+2. **Runtime guard vs manifest-time guard** — the check that
+   `row_range[0] > effective_header_row_index` requires knowing the resolved
+   header index, which may depend on the manifest default at runtime. This is
+   a runtime guard; it should raise `ValueError` with entity_id and both
+   indices, not silently skip rows.
+
+3. **Display_only + row_range** — if a spec is `layout_type=display_only`
+   AND has `row_range` set, the row_range is accepted but silently ignored
+   (display_only exits before row iteration). This should be noted in the
+   docstring but need not raise an error.
+
+### Tests
+
+8 tests in `tests/test_phase143_row_scope.py`. Synthetic workbook only.
+
+| # | Scenario |
+|---|----------|
+| 1 | Single spec, no row_range → byte-stable (all body rows emitted) |
+| 2 | Single spec, row_range set → only rows in range emitted; rows outside range absent |
+| 3 | Two specs, same sheet, non-overlapping ranges → both ingest; duplicate row labels do not collide |
+| 4 | Two specs, same sheet, overlapping ranges → `model_validate` raises with clear message |
+| 5 | Two specs, same sheet, one missing row_range → `model_validate` raises |
+| 6 | row_range start ≤ header_row_index → ingestor raises `ValueError` |
+| 7 | row_range end beyond sheet length → no crash; only available rows within range emitted |
+| 8 | display_only + row_range → rows skipped (display_only wins); no error |
+
+Full suite after Phase 14.3: **332 passed, 6 skipped** (8 new tests added to prior 324).
+
+**Implementation note (2026-05-03):** One additional fix was required during the test run: `ingest_workbook()` was building `entity_specs` as a `dict[str, EntitySheetSpec]` keyed by `sheet_name`, causing the second spec for a shared sheet to clobber the first. Fixed by switching to set-based membership checks for required/unmapped detection and iterating `manifest.entity_sheets` directly for ingestion. The existing Phase 14 `test_manifest_validators` match pattern "sheet names must be globally unique" was updated to "cross-role duplicates" to align with the revised cross-role validator message.

@@ -221,6 +221,27 @@ class EntitySheetSpec(BaseModel):
     header_row_index: int | None = Field(default=None, ge=1)
     period_header_format: _PERIOD_HEADER_LITERAL | None = None
     layout_type: Literal["horizontal_quarter", "display_only"] = "horizontal_quarter"
+    # Phase 14.3: optional row scope. 1-indexed inclusive [start, end].
+    # When set, the ingestor only iterates body rows in [start, end];
+    # rows outside the range are not extracted for this spec.
+    # Allows a single worksheet to be declared multiple times with
+    # non-overlapping row_range values so each section becomes its own
+    # logical entity. display_only + row_range is valid; range is ignored
+    # (display_only exits before row iteration). None preserves Phase 14
+    # full-body behavior byte-for-byte.
+    row_range: tuple[int, int] | None = Field(default=None)
+
+    @field_validator("row_range")
+    @classmethod
+    def _row_range_valid(cls, v: tuple[int, int] | None) -> tuple[int, int] | None:
+        if v is None:
+            return v
+        start, end = v
+        if start < 1:
+            raise ValueError(f"row_range start must be >= 1; got {start}")
+        if end < start:
+            raise ValueError(f"row_range end ({end}) must be >= start ({start})")
+        return v
 
     @field_validator("entity_id", "parent_entity_id")
     @classmethod
@@ -319,16 +340,68 @@ class WorkbookManifestConfig(BaseModel):
 
     @model_validator(mode="after")
     def _sheet_names_globally_unique(self) -> WorkbookManifestConfig:
-        names: list[str] = list(self.family_aggregate_sheets)
-        names += [s.sheet_name for s in self.entity_sheets]
-        names += [s.sheet_name for s in self.re_partnership_sheets]
-        names += list(self.board_snapshot_sheets)
-        if len(names) != len(set(names)):
-            dups = sorted({n for n in names if names.count(n) > 1})
+        # family_aggregate + board_snapshot must be globally unique with no
+        # cross-role overlap with entity/RE sheets.
+        agg_board: list[str] = list(self.family_aggregate_sheets) + list(
+            self.board_snapshot_sheets
+        )
+        agg_board_dups = sorted({n for n in agg_board if agg_board.count(n) > 1})
+        if agg_board_dups:
             raise ValueError(
-                f"WorkbookManifestConfig: sheet names must be globally unique "
-                f"across all role buckets; duplicates: {dups}"
+                f"WorkbookManifestConfig: sheet names must be unique within "
+                f"family_aggregate_sheets + board_snapshot_sheets; "
+                f"duplicates: {agg_board_dups}"
             )
+        # entity_sheets + re_partnership_sheets may share a sheet_name only
+        # when all non-display_only specs for that sheet have row_range set
+        # (enforced by _multi_sheet_row_ranges_valid). Cross-role check only:
+        # entity/RE names must not appear in family_aggregate/board_snapshot.
+        entity_re_names = [s.sheet_name for s in self.entity_sheets + self.re_partnership_sheets]
+        agg_board_set = set(agg_board)
+        cross_dups = sorted(agg_board_set & set(entity_re_names))
+        if cross_dups:
+            raise ValueError(
+                f"WorkbookManifestConfig: sheet names may not appear in both "
+                f"an entity/RE role and a family_aggregate/board_snapshot role; "
+                f"cross-role duplicates: {cross_dups}"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _multi_sheet_row_ranges_valid(self) -> WorkbookManifestConfig:
+        # Phase 14.3: validate multi-spec sheet declarations.
+        # A sheet_name appearing more than once across entity_sheets +
+        # re_partnership_sheets is only valid when:
+        #   (a) every non-display_only spec for that sheet has row_range set
+        #   (b) their row ranges are non-overlapping (sorted, end < next start)
+        from collections import defaultdict
+
+        specs_by_sheet: dict[str, list[EntitySheetSpec]] = defaultdict(list)
+        for s in self.entity_sheets + list(self.re_partnership_sheets):
+            specs_by_sheet[s.sheet_name].append(s)
+
+        for sheet_name, specs in specs_by_sheet.items():
+            if len(specs) == 1:
+                continue
+            active = [s for s in specs if s.layout_type != "display_only"]
+            for s in active:
+                if s.row_range is None:
+                    raise ValueError(
+                        f"Sheet {sheet_name!r} is declared {len(specs)} times; "
+                        f"entity_id {s.entity_id!r} must set row_range when "
+                        f"multiple specs share a sheet_name (display_only specs "
+                        f"are exempt)"
+                    )
+            sorted_active = sorted(active, key=lambda s: s.row_range[0])  # type: ignore[index]
+            for i in range(len(sorted_active) - 1):
+                a = sorted_active[i]
+                b = sorted_active[i + 1]
+                if a.row_range[1] >= b.row_range[0]:  # type: ignore[index]
+                    raise ValueError(
+                        f"Row ranges for sheet {sheet_name!r} overlap: "
+                        f"entity_id {a.entity_id!r} [{a.row_range[0]}-{a.row_range[1]}] "  # type: ignore[index]
+                        f"overlaps entity_id {b.entity_id!r} [{b.row_range[0]}-{b.row_range[1]}]"  # type: ignore[index]
+                    )
         return self
 
 

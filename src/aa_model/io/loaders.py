@@ -17,10 +17,12 @@ from aa_model.io.schemas import (
     CMAConfig,
     FixtureScenarioConfig,
     PEPacingConfig,
+    PositionIngestionConfig,
     PublicAllocationConfig,
     ScenariosConfig,
     SpendingConfig,
     StudyConfig,
+    WorkbookIngestionConfig,
 )
 
 
@@ -87,6 +89,45 @@ def load_study_config(base_path: Path) -> StudyConfig:
         scenarios=scenarios,
         fixture_scenario=fixture,
     )
+
+
+def load_local_study_config(local_path: Path) -> StudyConfig:
+    """Load a StudyConfig from a local overlay YAML (e.g. configs/base_local.yaml).
+
+    The overlay format supports ``extends_from``, ``workbook_ingestion``
+    (with a ``manifest_path`` key resolved here), and ``position_ingestion``.
+    All paths are resolved relative to the repo root discovered from ``local_path``.
+    """
+    local_path = Path(local_path).resolve()
+    root = resolve_repo_root(local_path)
+    overlay = _read_yaml(local_path)
+
+    extends_from = overlay.get("extends_from")
+    if not extends_from:
+        raise ValueError(f"overlay {local_path} must contain 'extends_from' key")
+
+    base_cfg = load_study_config(root / extends_from)
+    overrides: dict = {}
+
+    wi_raw = dict(overlay.get("workbook_ingestion") or {})
+    if wi_raw:
+        manifest_path_str = wi_raw.pop("manifest_path", None)
+        if manifest_path_str:
+            wi_raw["manifest"] = _read_yaml(root / manifest_path_str)
+        overrides["workbook_ingestion"] = WorkbookIngestionConfig(**wi_raw)
+
+    pi_raw = dict(overlay.get("position_ingestion") or {})
+    if pi_raw:
+        raw_mp = pi_raw.get("manifest_path")
+        if raw_mp and not Path(raw_mp).is_absolute():
+            pi_raw["manifest_path"] = str(root / raw_mp)
+        overrides["position_ingestion"] = PositionIngestionConfig(**pi_raw)
+
+    for key in ("liquidity_obligations", "liquidity_coverage_config", "reconciliation_gates"):
+        if key in overlay:
+            overrides[key] = overlay[key]
+
+    return base_cfg.model_copy(update=overrides)
 
 
 def _hash_objects_canonical(objects: list[dict]) -> str:

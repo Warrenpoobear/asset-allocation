@@ -85,6 +85,10 @@ def _parse_period_header(raw: object, fmt: str) -> str | None:
             return None
         if pd.isna(ts):
             return None
+        # Reject implausible years: numeric-0 formula cells produce epoch
+        # (1970Q1) via pd.Timestamp(0); real cashflow headers live in 1990–2060.
+        if not (1990 <= ts.year <= 2060):
+            return None
         return str(ts.to_period(freq="Q-DEC"))
     text = str(raw).strip()
     if not text:
@@ -202,19 +206,20 @@ def ingest_workbook(
 
         # Build the role index up front so we can detect missing
         # required sheets and unmapped sheets cleanly.
-        entity_specs: dict[str, EntitySheetSpec] = {s.sheet_name: s for s in manifest.entity_sheets}
-        re_specs: dict[str, REPartnershipSheetSpec] = {
-            s.sheet_name: s for s in manifest.re_partnership_sheets
-        }
+        # Use sets for membership checks; iterate the original lists so that
+        # multiple specs sharing a sheet_name (Phase 14.3 row_range scoping)
+        # each get their own ingestion pass.
+        entity_sheet_names = {s.sheet_name for s in manifest.entity_sheets}
+        re_sheet_names = {s.sheet_name for s in manifest.re_partnership_sheets}
         family_aggregate = set(manifest.family_aggregate_sheets)
         board_snapshots = set(manifest.board_snapshot_sheets)
 
-        all_mapped = set(entity_specs) | set(re_specs) | family_aggregate | board_snapshots
+        all_mapped = entity_sheet_names | re_sheet_names | family_aggregate | board_snapshots
 
         # Required sheets: every entity_sheet, every re_partnership_sheet,
         # every family_aggregate_sheet, every board_snapshot_sheet must
         # be present. Missing → hard error.
-        required = set(entity_specs) | set(re_specs) | family_aggregate | board_snapshots
+        required = entity_sheet_names | re_sheet_names | family_aggregate | board_snapshots
         missing_required = sorted(required - set(all_sheet_names))
         if missing_required:
             raise ValueError(
@@ -225,30 +230,31 @@ def ingest_workbook(
         # in the manifest. Surfaced as INFO; ingestion proceeds.
         diag.unmapped_sheets = sorted(set(all_sheet_names) - all_mapped)
 
-        # Entity-sheet ingestion.
-        for sheet_name, spec in entity_specs.items():
+        # Entity-sheet ingestion — iterate the list directly so duplicate
+        # sheet_name entries (row_range-scoped specs) each fire independently.
+        for spec in manifest.entity_sheets:
             _ingest_entity_sheet(
                 wb=wb,
-                sheet_name=sheet_name,
+                sheet_name=spec.sheet_name,
                 spec=spec,
                 manifest=manifest,
                 workbook_filename=workbook_filename,
                 result=result,
             )
-            diag.sheets_ingested.append(sheet_name)
+            diag.sheets_ingested.append(spec.sheet_name)
 
         # RE-partnership ingestion (same parser plus per-row asset_id
         # assignment).
-        for sheet_name, spec in re_specs.items():
+        for spec in manifest.re_partnership_sheets:
             _ingest_entity_sheet(
                 wb=wb,
-                sheet_name=sheet_name,
+                sheet_name=spec.sheet_name,
                 spec=spec,
                 manifest=manifest,
                 workbook_filename=workbook_filename,
                 result=result,
             )
-            diag.sheets_ingested.append(sheet_name)
+            diag.sheets_ingested.append(spec.sheet_name)
 
         # Family-aggregate sheets are parsed for reconciliation only —
         # totals are extracted into board_snapshot_reconciliations.
@@ -366,11 +372,27 @@ def _ingest_entity_sheet(
     # Track (entity_id, quarter, row_label) to detect duplicates.
     seen_keys: set[tuple[str, str, str]] = set()
 
-    # Body rows start AFTER the header row (Phase 14.1: header_row_index
-    # is configurable, so the body slice + 1-indexed row_idx must shift
-    # accordingly).
-    body_start = header_row_index  # 1-indexed = row immediately after header
-    for row_idx, body in enumerate(rows[body_start:], start=body_start + 1):
+    # Phase 14.3: apply row_range if set.  row_range is 1-indexed inclusive
+    # [start, end]; start must exceed the header row so it falls inside the
+    # body.  Original worksheet row numbers are preserved in row_idx for all
+    # diagnostics and error messages.
+    if spec.row_range is not None:
+        rr_start, rr_end = spec.row_range
+        if rr_start <= header_row_index:
+            raise ValueError(
+                f"entity {spec.entity_id!r}: row_range start ({rr_start}) "
+                f"must be greater than header_row_index ({header_row_index})"
+            )
+        body_rows = rows[rr_start - 1 : rr_end]
+        body_row_start_idx = rr_start
+    else:
+        # Body rows start AFTER the header row (Phase 14.1: header_row_index
+        # is configurable, so the body slice + 1-indexed row_idx must shift
+        # accordingly).
+        body_rows = rows[header_row_index:]  # body_start = header_row_index
+        body_row_start_idx = header_row_index + 1
+
+    for row_idx, body in enumerate(body_rows, start=body_row_start_idx):
         if not body or len(body) < 2:
             result.diagnostics.blank_rows_skipped += 1
             continue
