@@ -8,29 +8,30 @@
 
 ## Current State <!-- auto -->
 
-- Current phase: **Phase 21 — reconciliation gates / policy thresholds (landed); cross-walk workflow doc landed**
-- Latest commit: `c142ffd` — chore(lint): ruff --fix + format sweep for Phase 21 (412e1ee)
-- Branch: `main` (1 ahead, 0 behind origin — lint sweep pending push)
-- Last pushed: 2026-05-03 15:09:53 -0400 (`8fa4740`)
+- Current phase: **Phase 23 design lock — PE real-data commitment input layer (locked; implementation pending)**
+- Latest commit: `f81ff43` — docs(model): Phase 23 design lock — PE real-data commitment input layer
+- Branch: `main` (0 ahead, 0 behind origin)
+- Last pushed: 2026-05-04 15:25:32 -0400 (`f81ff43`)
 - Working tree: clean
-- Tests: **353 passed** (`.venv/bin/pytest -p no:warnings`; +6 from Phase 21)
-- Ruff: clean across `src tests scripts` (post-Phase-21 lint sweep at `c142ffd`)
-- Latest run set: `data/processed/runs/aa-e3f6ab2337ad-96451d89bace-20260503T191322Z-*`
+- Tests: **371 passed** (`.venv/bin/pytest -p no:warnings --ignore=tests/test_transaction_cost_summary.py`; 4 cvxportfolio-gated omitted)
+- Ruff: clean across `src tests scripts` (post-Phase-22/14.3 lint sweep at `82f84b4`)
+- Latest run set: `data/processed/runs/aa-dc07a16dffa9-96451d89bace-20260504T204759Z-3e37-crisis_correlation`
 
-Recent series (10 commits since 2026-05-03 12:00 ET):
-- `c142ffd` chore(lint): ruff --fix + format sweep for Phase 21 (412e1ee)
-- `8fa4740` docs(phase-14): cross-walk workflow doc (workbook -> manifest)
-- `412e1ee` Phase 21 / L20: reconciliation gates / policy thresholds
-- `12d37bd` docs(tracking): post-Phase-20 sync + mark Phase 19.1 design lock superseded
-- `2be73ca` chore(lint): ruff --fix + format sweep for Phase 20 (a5114f6)
-- `5ff335f` docs(tracking): post-Phase-19 / Phase-19.1-locked sync
-- `a5114f6` Phase 20 / L20: PE call-obligation reconciliation to cash-flow worksheet
-- `e7e81ec` docs(model): Phase 19.1 design lock — workbook capital-call reconciliation [SUPERSEDED by Phase 20]
-- `9c250f4` chore(lint): ruff --fix + format sweep for Phase 19 (af58dd3)
-- `0ad2420` docs(model): Phase 19 design prompt — PE call-obligation reconciled to workbook
+Recent series (10 commits since last tracker sync at `303c73e`):
+- `f81ff43` docs(model): Phase 23 design lock — PE real-data commitment input layer
+- `07327e1` docs(sync): record lint sweep 82f84b4; correct Phase 14.3 test count
+- `82f84b4` chore(lint): sweep Phase 14.3 + Phase 22
+- `c92642a` docs(roadmap): model buildout sequencing and deferred gates
+- `01ff365` docs(pe-pacing): design constraints for three-layer pacing model
+- `5fdf68b` docs(l19): tighten Phase B validation spec for pilot worksheet
+- `f3169a9` docs(l19): L19 completion workflow — row classification plan
+- `d66e01a` docs(l20): mark L20 resolved — workbook-driven capital-call obligation
+- `82ce2ec` feat(phase-14.3): workbook row_range / data-region scoping
+- `a6db960` feat(phase-22): manager terms consumer / diagnostic layer
 
 ## Open Gates
 
+- [ ] **Phase 23 implementation** — design locked at `f81ff43` (PE real-data commitment input layer). Implementation pending.
 - [ ] **Phase 7 STAIRS PE adapter** — design locked at `993a751`. Implementation
       blocked until tests + invariants drafted alongside `pe/stairs_adapter.py`.
 - [ ] **Phase 10 L14 transaction-cost diagnostics** — partially resolved at
@@ -42,8 +43,6 @@ Recent series (10 commits since 2026-05-03 12:00 ET):
       added configurable gates (advisory / warning / requires_override /
       hard_fail). The 3 missing-test follow-ups from the superseded lock
       remain open until back-checked against Phase 21's gate behavior.
-- [ ] **L20 doc-line** — Phase 20/21 added L20 status entries to
-      MODEL_DOCUMENTATION.md (verify in next sweep).
 - [ ] **L19 spending-base realism** — partially resolved (Phase 12/12.5/13/14
       at MODEL_DOCUMENTATION.md:1376). Remaining gap: real-workbook
       validation pending.
@@ -68,7 +67,6 @@ Recent series (10 commits since 2026-05-03 12:00 ET):
 | L14 | Only linear transaction cost is modeled (partial resolve)      | 984      |
 | L17 | Cross-engine metric comparability is not meaningful            | 839      |
 | L19 | Spending-base realism — partial; pending real-workbook validation | 1376  |
-| L20 | PE call obligation — workbook reconciliation + gates (resolved Phase 20+21; 3 follow-up tests pending) | (Ph20+21) |
 
 ## Resolved Limitations
 
@@ -81,6 +79,7 @@ Recent series (10 commits since 2026-05-03 12:00 ET):
 | L15 | Phase 4a | 2026-05-01  | Owl reacted to forecasted NAV, not realized NAV        |
 | L16 | Phase 11 | 2026-05-02  | Owl scale-invariant in initial NAV (absolute guardrail)|
 | L18 | Phase 4a | 2026-05-01  | Owl misread inflation shock as headroom                |
+| L20 | Phase 20+21 | 2026-05-03 | PE call obligation — workbook reconciliation + gates  |
 
 ## Do Not Violate (governance invariants)
 
