@@ -11357,6 +11357,22 @@ fixtures only. No live workbook. All tests green.
 Full suite: 368 passed, 0 failures (4 pre-existing cvxportfolio failures
 now resolved by the new test environment; prior baseline was 298 + 4 failures).
 
+### 2026-05-03 — chore(lint): sweep Phase 14.3 + Phase 22 (`82f84b4`)
+
+Post-feature lint debt cleanup. No behavior changes.
+
+* `tests/test_phase143_row_scope.py` — I001 unsorted imports; F401 unused
+  `datetime.date` and `EntitySheetSpec`.
+* `tests/test_phase22_manager_terms_diagnostics.py` — I001; F401 unused
+  `ManagerTermsDiagnostics`.
+* `src/aa_model/liquidity/manager_terms_diagnostics.py` — ruff format.
+* `src/aa_model/ingestion/schemas.py` — cosmetic line-collapse in
+  `_sheet_names_globally_unique` (no behavior change).
+* Removed 4 stray zero-byte files at repo root (`Generic`, `data.`,
+  `from`, `into`) created by a botched shell command.
+
+Full suite after sweep: **376 passed**. Ruff: clean. Format: clean.
+
 ---
 
 ## Phase 14.3 design — workbook row-scope / data-region support
@@ -11523,7 +11539,10 @@ The reviewer may apply tightenings; the following are pre-flagged:
 | 7 | row_range end beyond sheet length → no crash; only available rows within range emitted |
 | 8 | display_only + row_range → rows skipped (display_only wins); no error |
 
-Full suite after Phase 14.3: **332 passed, 6 skipped** (8 new tests added to prior 324).
+Full suite after Phase 14.3 + lint sweep: **376 passed** (full suite including
+`test_transaction_cost_summary.py`); **371 passed** excluding that file.
+8 new Phase 14.3 tests added. The 6 previously-skipped cvxportfolio tests are
+now passing under the updated test environment (resolved in Phase 22 era).
 
 **Implementation note (2026-05-03):** One additional fix was required during the test run: `ingest_workbook()` was building `entity_specs` as a `dict[str, EntitySheetSpec]` keyed by `sheet_name`, causing the second spec for a shared sheet to clobber the first. Fixed by switching to set-based membership checks for required/unmapped detection and iterating `manifest.entity_sheets` directly for ingestion. The existing Phase 14 `test_manifest_validators` match pattern "sheet names must be globally unique" was updated to "cross-role duplicates" to align with the revised cross-role validator message.
 
