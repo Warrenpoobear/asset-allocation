@@ -9,25 +9,22 @@
 ## Current State <!-- auto -->
 
 - Current phase: **Phase 23 design lock — PE real-data commitment input layer (locked; implementation pending)**
-- Latest commit: `f81ff43` — docs(model): Phase 23 design lock — PE real-data commitment input layer
+- Latest commit: `0280024` — fix(manifest): sanitize invocation_id against path traversal
 - Branch: `main` (0 ahead, 0 behind origin)
-- Last pushed: 2026-05-04 15:25:32 -0400 (`f81ff43`)
+- Last pushed: 2026-05-05 13:08:45 -0400 (`0280024`)
 - Working tree: clean
-- Tests: **371 passed** (`.venv/bin/pytest -p no:warnings --ignore=tests/test_transaction_cost_summary.py`; 4 cvxportfolio-gated omitted)
-- Ruff: clean across `src tests scripts` (post-Phase-22/14.3 lint sweep at `82f84b4`)
-- Latest run set: `data/processed/runs/aa-dc07a16dffa9-96451d89bace-20260504T204759Z-3e37-crisis_correlation`
+- Tests: **386 passed** (`.venv/bin/pytest -p no:warnings --ignore=tests/test_transaction_cost_summary.py`; 4 cvxportfolio-gated omitted; +15 vs prior sync)
+- Ruff: **1 error** — `tests/test_review_fixes_2026_05_05.py:13` I001 import sort (fixable; `chore(lint):` sweep pending — recurring lint-debt-after-fix pattern)
+- Latest run set: `data/processed/runs/aa-dc07a16dffa9-96451d89bace-20260505T225216Z-dd9a-crisis_correlation`
 
-Recent series (10 commits since last tracker sync at `303c73e`):
-- `f81ff43` docs(model): Phase 23 design lock — PE real-data commitment input layer
-- `07327e1` docs(sync): record lint sweep 82f84b4; correct Phase 14.3 test count
-- `82f84b4` chore(lint): sweep Phase 14.3 + Phase 22
-- `c92642a` docs(roadmap): model buildout sequencing and deferred gates
-- `01ff365` docs(pe-pacing): design constraints for three-layer pacing model
-- `5fdf68b` docs(l19): tighten Phase B validation spec for pilot worksheet
-- `f3169a9` docs(l19): L19 completion workflow — row classification plan
-- `d66e01a` docs(l20): mark L20 resolved — workbook-driven capital-call obligation
-- `82ce2ec` feat(phase-14.3): workbook row_range / data-region scoping
-- `a6db960` feat(phase-22): manager terms consumer / diagnostic layer
+Recent series (5 commits since last tracker sync at `f81ff43`):
+- `0280024` fix(manifest): sanitize invocation_id against path traversal
+- `d2d9e09` fix(config): expand hash, resolve overlay paths, tighten policy schemas
+- `021a408` fix(pe): TA wind-down, fund_count cap, reconciliation div-by-zero
+- `fc85426` docs(governance): sync governance docs to Phase 23 / L20 resolved
+- `e5e6792` docs(tracking): post-Phase-23-lock sync — 371 tests, L20 resolved, Phase 23 impl pending
+
+⚠️ **Governance flag**: `021a408` / `d2d9e09` / `0280024` touch `src/aa_model/` (manifest, loaders, coverage, pe/call_obligation, pe/call_reconciliation, pe/ta_model) but `MODEL_DOCUMENTATION.md` was not updated in this range. +195 lines of new tests in `test_review_fixes_2026_05_05.py` suggest substantive behavior changes beyond cosmetic fixes. Recommend a `docs(model):` follow-up for the three `fix()` commits to satisfy the behavior-change governance rule.
 
 ## Open Gates
 
