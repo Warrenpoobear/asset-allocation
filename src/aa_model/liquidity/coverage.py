@@ -47,7 +47,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from aa_model.ingestion.liquidity_mapping import resolve_phase12_tier
 from aa_model.ingestion.schemas_position import ManagerTermsRecord, PositionRecord
@@ -106,12 +106,23 @@ class LiquidityCoverageConfig(BaseModel):
 
     model_config = _STRICT
 
-    liquid_coverage_breach_threshold: float = 1.0
-    liquid_coverage_warning_threshold: float = 2.0
-    illiquid_concentration_warning_pct: float = 0.60
-    capital_call_coverage_warning_ratio: float = 1.0
-    missing_bucket_warning_threshold: int = 1
-    runway_horizon_quarters: int = 8
+    liquid_coverage_breach_threshold: float = Field(default=1.0, ge=0.0)
+    liquid_coverage_warning_threshold: float = Field(default=2.0, ge=0.0)
+    illiquid_concentration_warning_pct: float = Field(default=0.60, ge=0.0, le=1.0)
+    capital_call_coverage_warning_ratio: float = Field(default=1.0, ge=0.0)
+    missing_bucket_warning_threshold: int = Field(default=1, ge=0)
+    runway_horizon_quarters: int = Field(default=8, ge=1)
+
+    @model_validator(mode="after")
+    def _thresholds_well_ordered(self) -> LiquidityCoverageConfig:
+        if self.liquid_coverage_warning_threshold < self.liquid_coverage_breach_threshold:
+            raise ValueError(
+                f"liquid_coverage_warning_threshold "
+                f"({self.liquid_coverage_warning_threshold}) must be >= "
+                f"liquid_coverage_breach_threshold "
+                f"({self.liquid_coverage_breach_threshold})"
+            )
+        return self
 
 
 # ---- output types ----------------------------------------------------------
@@ -301,6 +312,7 @@ def compute_liquidity_coverage(
         total_unfunded=total_unfunded,
         stale_nav_count=stale_nav_count,
         untagged_position_count=untagged_position_count,
+        runway_quarters=runway_quarters,
         cfg=cfg,
     )
 
@@ -340,6 +352,7 @@ def _build_diagnostics(
     total_unfunded: float,
     stale_nav_count: int,
     untagged_position_count: int,
+    runway_quarters: int | None,
     cfg: LiquidityCoverageConfig,
 ) -> LiquidityCoverageDiagnostics:
     breaches: list[str] = []
@@ -392,6 +405,12 @@ def _build_diagnostics(
 
     if untagged_position_count >= cfg.missing_bucket_warning_threshold:
         warnings.append(f"{untagged_position_count} position(s) missing liquidity_bucket tag")
+
+    if runway_quarters is not None and runway_quarters < cfg.runway_horizon_quarters:
+        warnings.append(
+            f"liquidity_runway={runway_quarters} quarters < "
+            f"horizon {cfg.runway_horizon_quarters} quarters"
+        )
 
     # Advisories
     if obligations.annual_spend_usd is None:

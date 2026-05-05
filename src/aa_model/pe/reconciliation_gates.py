@@ -23,7 +23,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 if TYPE_CHECKING:
     from aa_model.pe.call_reconciliation import WorkbookCallReconciliationDiagnostics
@@ -38,6 +38,8 @@ class ReconciliationGatesConfig(BaseModel):
     run time by the orchestrator. Default values reproduce Phase 20 advisory-only
     behavior except for blocking, which defaults to requires_override.
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     # Percentage thresholds — pct of max(workbook_total, pe_total).
     warning_pct: float = Field(default=0.10, ge=0.0, le=1.0)

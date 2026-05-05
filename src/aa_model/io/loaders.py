@@ -114,6 +114,9 @@ def load_local_study_config(local_path: Path) -> StudyConfig:
         manifest_path_str = wi_raw.pop("manifest_path", None)
         if manifest_path_str:
             wi_raw["manifest"] = _read_yaml(root / manifest_path_str)
+        raw_wp = wi_raw.get("workbook_path")
+        if raw_wp and not Path(raw_wp).is_absolute():
+            wi_raw["workbook_path"] = str(root / raw_wp)
         overrides["workbook_ingestion"] = WorkbookIngestionConfig(**wi_raw)
 
     pi_raw = dict(overlay.get("position_ingestion") or {})
@@ -121,6 +124,9 @@ def load_local_study_config(local_path: Path) -> StudyConfig:
         raw_mp = pi_raw.get("manifest_path")
         if raw_mp and not Path(raw_mp).is_absolute():
             pi_raw["manifest_path"] = str(root / raw_mp)
+        raw_pwp = pi_raw.get("workbook_path")
+        if raw_pwp and not Path(raw_pwp).is_absolute():
+            pi_raw["workbook_path"] = str(root / raw_pwp)
         overrides["position_ingestion"] = PositionIngestionConfig(**pi_raw)
 
     for key in ("liquidity_obligations", "liquidity_coverage_config", "reconciliation_gates"):
@@ -147,13 +153,21 @@ def _hash_objects_canonical(objects: list[dict]) -> str:
 def hash_study_config(cfg: StudyConfig) -> tuple[str, str]:
     """Return ``(config_hash, fixtures_hash)`` from the resolved study config.
 
-    ``config_hash`` covers base + sub-configs (allocation, spending, pe_pacing,
-    scenarios). ``fixtures_hash`` covers the active fixture scenario only.
-    Each is computed from pydantic ``model_dump(mode='json')`` so an
-    in-memory override changes the hash exactly the same way an edited
-    YAML file would.
+    ``config_hash`` covers every run-affecting input on ``StudyConfig``:
+    base + sub-configs (allocation, cma, spending, pe_pacing, scenarios)
+    plus the optional Phase 13–21 fields when set (distribution_producer,
+    workbook_ingestion, position_ingestion, liquidity_obligations,
+    liquidity_coverage_config, reconciliation_gates). Optional fields are
+    included only when not ``None`` so two configs without local overlays
+    produce the same hash they did before these fields existed.
+
+    ``fixtures_hash`` covers the active fixture scenario only.
+
+    Each component is dumped via ``model_dump(mode='json')`` (or used
+    directly for the dict-typed fields) so an in-memory override changes
+    the hash exactly the same way an edited YAML file would.
     """
-    cfg_objs = [
+    cfg_objs: list[dict] = [
         cfg.base.model_dump(mode="json"),
         cfg.allocation.model_dump(mode="json"),
         cfg.cma.model_dump(mode="json"),
@@ -161,5 +175,17 @@ def hash_study_config(cfg: StudyConfig) -> tuple[str, str]:
         cfg.pe_pacing.model_dump(mode="json"),
         cfg.scenarios.model_dump(mode="json"),
     ]
+    if cfg.distribution_producer is not None:
+        cfg_objs.append(cfg.distribution_producer.model_dump(mode="json"))
+    if cfg.workbook_ingestion is not None:
+        cfg_objs.append(cfg.workbook_ingestion.model_dump(mode="json"))
+    if cfg.position_ingestion is not None:
+        cfg_objs.append(cfg.position_ingestion.model_dump(mode="json"))
+    if cfg.liquidity_obligations is not None:
+        cfg_objs.append(dict(cfg.liquidity_obligations))
+    if cfg.liquidity_coverage_config is not None:
+        cfg_objs.append(dict(cfg.liquidity_coverage_config))
+    if cfg.reconciliation_gates is not None:
+        cfg_objs.append(dict(cfg.reconciliation_gates))
     fix_objs = [cfg.fixture_scenario.model_dump(mode="json")]
     return _hash_objects_canonical(cfg_objs), _hash_objects_canonical(fix_objs)
