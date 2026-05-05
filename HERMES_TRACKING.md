@@ -2,7 +2,7 @@
 
 > Stable entry point for Hermes/OpenWebUI dashboards. Update sections marked
 > `<!-- auto -->` from CI/cron; update prose sections by hand at phase boundaries.
-> Last manual sync: 2026-05-02.
+> Last manual sync: 2026-05-04.
 
 ---
 
@@ -127,22 +127,22 @@ Cron jobs are registered separately in Hermes (see `cronjob list`).
 
 ### Asset Allocation Model — Status
 ```
-Current phase:        Phase 21 landed (reconciliation gates / policy thresholds)
-Last pushed commit:   c142ffd  (Phase 21 lint sweep, +1 ahead pending push)
-Tests:                353 passed
-Ruff errors:          0 (clean across src/tests/scripts post-Phase-21 sweep at c142ffd)
-Open limitations:     13  (L20 effectively resolved across Phase 20+21)
-Resolved limitations: 7
-Next gated task:      L20 follow-up tests (sign-mismatch, per-quarter mixed window, determinism); MODEL_DOCUMENTATION.md L20 status verification
-Last model-doc update: 2026-05-03 (L19 status under Phase 14)
-Latest run:           20260503T045900Z (crisis_correlation)
+Current phase:        Phase 23 — PE real-data commitment input layer (design locked; implementation pending)
+Last pushed commit:   f81ff43  (Phase 23 design lock)
+Tests:                371 passed (--ignore=tests/test_transaction_cost_summary.py; 4 cvxportfolio-gated omitted)
+Ruff errors:          0 (clean across src/tests/scripts post-Phase-22/14.3 sweep at 82f84b4)
+Open limitations:     12  (L20 resolved Phase 20+21 2026-05-03)
+Resolved limitations: 8   (L4, L6, L8, L13, L15, L16, L18, L20)
+Next gated task:      Phase 23 implementation
+Last model-doc update: 2026-05-04
+Latest run:           20260504T204759Z (crisis_correlation)
 ```
 
 ### Governance Gates
 ```
 [x] Design lock before implementation       (Phase 7,8,9,10,11 all locked)
 [x] PROJECT_SCOPE.md authoritative          (locked 69cae5c)
-[ ] MODEL_DOCUMENTATION updated post-impl   (pending L16/L19 sweep)
+[x] MODEL_DOCUMENTATION updated post-impl   (L20 resolved; L16/L19 status lines pending full sweep)
 [x] CMA baseline immutable                  (verified L4 resolution)
 [x] Ledger remains sole state spine         (architectural)
 [x] L6 correlation_shock before STAIRS      (Phase 6 resolved L6)
