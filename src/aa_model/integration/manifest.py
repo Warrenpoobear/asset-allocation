@@ -17,12 +17,20 @@ from __future__ import annotations
 
 import importlib.metadata as md
 import json
+import re
 import secrets
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
 _TRACKED_LIBS = ("aa_model", "numpy", "pandas", "pydantic", "pyyaml", "pyarrow", "jinja2")
+
+# Path-component-safe: alphanumerics, dash, underscore. The run_id is
+# interpolated into a directory name (orchestrator: ``out_dir = base_dir /
+# run_id``); a value containing ``/``, ``\``, or ``..`` would escape the
+# intended run dir. Length cap matches typical filename limits with margin
+# for the ``aa-<cfg12>-<fix12>-`` prefix.
+_INVOCATION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 
 
 def _library_versions() -> dict[str, str]:
@@ -66,7 +74,16 @@ def make_run_id(
     """
     cfg = config_hash.split(":", 1)[-1][:12]
     fix = fixtures_hash.split(":", 1)[-1][:12]
-    inv = invocation_id if invocation_id is not None else make_invocation_id()
+    if invocation_id is None:
+        inv = make_invocation_id()
+    else:
+        if not _INVOCATION_ID_RE.match(invocation_id):
+            raise ValueError(
+                f"invocation_id must match {_INVOCATION_ID_RE.pattern} "
+                f"(path-component-safe; rejects '/', '\\', '..'); "
+                f"got {invocation_id!r}"
+            )
+        inv = invocation_id
     return f"aa-{cfg}-{fix}-{inv}"
 
 

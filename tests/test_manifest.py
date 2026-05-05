@@ -71,3 +71,24 @@ def test_explicit_invocation_id_reproduces_run_dir(base_config_path):
     r2 = run_orchestrator(base_config_path, dry_run=True, invocation_id="20260501T999999Z-test")
     assert r1.run_id == r2.run_id
     assert r1.output_dir == r2.output_dir
+
+
+def test_invocation_id_rejects_path_traversal():
+    import pytest
+
+    cfg = "sha256:abcdef0123456789aabb"
+    fix = "sha256:zzzzyyyy00112233xxxx"
+    # Each of these would let the run_id escape its parent directory if
+    # interpolated unchecked into ``base_dir / run_id``.
+    for bad in ("../escape", "..", "a/b", "a\\b", "", "a" * 81, "spaces here", "a b"):
+        with pytest.raises(ValueError, match="invocation_id"):
+            make_run_id(cfg, fix, invocation_id=bad)
+
+
+def test_invocation_id_accepts_safe_values():
+    cfg = "sha256:abcdef0123456789aabb"
+    fix = "sha256:zzzzyyyy00112233xxxx"
+    # Plain timestamp+nonce, hyphen-suffixed scenarios, and underscores all OK.
+    make_run_id(cfg, fix, invocation_id="20260501T120000Z-a3f9")
+    make_run_id(cfg, fix, invocation_id="20260501T120000Z-a3f9-inflation_shock")
+    make_run_id(cfg, fix, invocation_id="some_label-42")
