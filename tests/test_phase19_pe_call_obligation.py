@@ -198,6 +198,45 @@ def test_deterministic_same_input_same_output():
     assert r1.advisories == r2.advisories
 
 
+# ---- 5b. fund_count is not capped at 5 -------------------------------------
+
+
+def test_fund_count_counts_all_positive_funds_not_just_top_5():
+    """fund_count must reflect every fund with call_usd > 0 in the window —
+    not just the top-5 contributors surfaced for reporting. Regression for
+    a bug where ``fund_count = len(top_contributors)`` capped the count
+    at 5 even when many more funds had calls in the window."""
+    coverage_q = _coverage_q(2026, 1)
+    window = [str(coverage_q + i) for i in range(1, 5)]
+
+    # 7 distinct funds with a call in every window quarter.
+    rows = []
+    for i in range(7):
+        for q in window:
+            rows.append(
+                {
+                    "fund_name": f"fund_{i}",
+                    "vintage": "2023Q1",
+                    "quarter_index": 0,
+                    "quarter": q,
+                    "age_years": 1.0,
+                    "nav_start_usd": 1_000_000.0,
+                    "call_usd": 10_000.0 * (i + 1),
+                    "distribution_usd": 0.0,
+                    "nav_mark_usd": 0.0,
+                    "nav_end_usd": 1_000_000.0,
+                    "sleeve": "pe_buyout",
+                }
+            )
+    pe_proj = pd.DataFrame(rows, columns=list(PROJECTION_COLUMNS) + ["sleeve"])
+
+    result = derive_pe_capital_call_obligation(pe_proj, coverage_q)
+
+    assert result.fund_count == 7
+    # top_contributors is still capped at 5 — that's the reporting contract.
+    assert len(result.top_contributors) == 5
+
+
 # ---- 6. Default configs byte-stable (bridge inactive) ----------------------
 
 

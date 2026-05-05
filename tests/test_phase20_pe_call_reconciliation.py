@@ -209,6 +209,47 @@ def test_blocking_delta_workbook_wins():
     assert any("BLOCKING" in adv for adv in result.advisories)
 
 
+# ---- 4b. zero-denominator guard — both totals zero --------------------------
+
+
+def test_both_workbook_and_pe_totals_zero_no_division_error():
+    """Both workbook total and PE total present and each equal to zero
+    must not divide by zero. Reachable when a caller constructs a bridge
+    diag with next_12m_capital_calls_usd=0.0 directly (the dataclass does
+    not validate that field) and the workbook reports a zero-amount line."""
+    coverage_q = _coverage_q(2026, 1)
+    w = _window(coverage_q)
+
+    # Workbook line with zero amount in the window. This produces a
+    # workbook_total of 0.0 (not None) once aggregated.
+    workbook_lines = [_FakeCashFlowLine(quarter=w[0], amount_usd=0.0)]
+
+    pe_bridge = PECallObligationBridgeDiagnostics(
+        next_12m_capital_calls_usd=0.0,
+        source="pe_pacing",
+        coverage_quarter=str(coverage_q),
+        quarters_included=w,
+        quarters_in_horizon=w,
+        fund_count=0,
+        calls_by_quarter={},
+        top_contributors=[],
+        advisories=[],
+    )
+
+    result = reconcile_call_obligation(
+        workbook_lines=workbook_lines,
+        pe_bridge_diag=pe_bridge,
+        coverage_quarter=coverage_q,
+        explicit_usd=None,
+    )
+
+    # Both totals are 0.0 — denominator guard kicks in.
+    assert result.workbook_total_usd == pytest.approx(0.0)
+    assert result.total_delta_usd == pytest.approx(0.0)
+    assert result.total_delta_pct == pytest.approx(0.0)
+    assert result.delta_classification == "n/a"
+
+
 # ---- 5. both absent → unavailable + advisory --------------------------------
 
 

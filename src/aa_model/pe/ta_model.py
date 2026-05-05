@@ -72,12 +72,17 @@ def project_fund(fund: FundConfig, defaults: TADefaultsConfig) -> pd.DataFrame:
 
         nav_after_call = nav + call
 
-        annual_dist_rate = max(Y, (age_years / L) ** B)
-        # In the final quarter, force full liquidation so the fund winds down
-        # cleanly (annual_dist_rate may exceed 1.0 if (age/L)**B does; cap at 1).
-        quarterly_dist_rate = min(annual_dist_rate / 4.0, 1.0)
-        distribution = quarterly_dist_rate * nav_after_call
-        nav_after_dist = nav_after_call - distribution
+        if t == n_quarters - 1:
+            # Final quarter: force full liquidation so the fund winds down
+            # cleanly to zero NAV. The pacing curve produces residual NAV at
+            # lifetime end; the model contract is that funds terminate.
+            distribution = nav_after_call
+            nav_after_dist = 0.0
+        else:
+            annual_dist_rate = max(Y, (age_years / L) ** B)
+            quarterly_dist_rate = min(annual_dist_rate / 4.0, 1.0)
+            distribution = quarterly_dist_rate * nav_after_call
+            nav_after_dist = nav_after_call - distribution
 
         nav_mark = nav_after_dist * (G / 4.0)
         nav_end = nav_after_dist + nav_mark

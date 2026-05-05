@@ -107,13 +107,15 @@ def derive_pe_capital_call_obligation(
 
     if not in_window.empty:
         fund_totals = in_window.groupby("fund_name")["call_usd"].sum().sort_values(ascending=False)
+        positive_fund_totals = fund_totals[fund_totals > 0.0]
+        fund_count = int(len(positive_fund_totals))
         top_contributors = [
-            (str(name), float(val)) for name, val in fund_totals.head(5).items() if float(val) > 0.0
+            (str(name), float(val)) for name, val in positive_fund_totals.head(5).items()
         ]
     else:
         top_contributors = []
+        fund_count = 0
 
-    fund_count = len(top_contributors)
     total_calls = sum(calls_by_quarter.values())
 
     if total_calls == 0.0:

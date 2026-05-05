@@ -53,3 +53,14 @@ def test_calls_sum_to_commitment() -> None:
     df = project_fund(fund, defaults)
     total_called = df["call_usd"].sum()
     assert pytest.approx(total_called, rel=1e-12) == fund.commitment_usd
+
+
+def test_final_quarter_fully_liquidates() -> None:
+    fund, defaults = _golden_inputs()
+    df = project_fund(fund, defaults)
+    last = df.iloc[-1]
+    # Final quarter winds the fund down: distribution = nav going in,
+    # nav_end = 0. Without this, the pacing curve leaves a residual
+    # NAV at lifetime end (the bug fixed in this change).
+    assert last["distribution_usd"] == pytest.approx(last["nav_start_usd"])
+    assert last["nav_end_usd"] == pytest.approx(0.0)

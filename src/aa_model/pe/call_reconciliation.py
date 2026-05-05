@@ -191,7 +191,10 @@ def reconcile_call_obligation(
                 delta_by_quarter[q] = delta
         total_delta_usd = workbook_total - pe_total
         delta_classification = _classify_delta(total_delta_usd, workbook_total, pe_total)
-        total_delta_pct = abs(total_delta_usd) / max(workbook_total, pe_total) * 100.0
+        denom = max(workbook_total, pe_total)
+        # Both sources present and both zero is a legitimate state (no calls
+        # forecast either way); treat the percentage as 0 rather than dividing.
+        total_delta_pct = (abs(total_delta_usd) / denom * 100.0) if denom > 0.0 else 0.0
         if delta_classification == "warning":
             advisories.append(
                 f"workbook vs PE pacing delta WARNING: "
