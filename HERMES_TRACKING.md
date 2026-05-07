@@ -9,20 +9,20 @@
 ## Current State <!-- auto -->
 
 - Current phase: **Phase 23 design lock — PE real-data commitment input layer (locked; implementation pending)**
-- Latest commit: `5977b19` — docs(tracking): MODE A sync 2026-05-05 — 386 tests, 1 ruff error, governance flag on 3 fix() commits
+- Latest commit: `3b45185` — docs(tracking): MODE A sync 2026-05-06 — 386 tests stable, 1 ruff error carried, gov flag unresolved
 - Branch: `main` (0 ahead, 0 behind origin)
-- Last pushed: 2026-05-05 18:54:21 -0400 (`5977b19`)
+- Last pushed: 2026-05-06 18:39:32 -0400 (`3b45185`)
 - Working tree: clean
 - Tests: **386 passed** (`.venv/bin/pytest -p no:warnings --ignore=tests/test_transaction_cost_summary.py`; 4 cvxportfolio-gated omitted; +0 vs prior sync of 386)
 - Ruff: **1 error** — `tests/test_review_fixes_2026_05_05.py:13` I001 import sort (fixable; `chore(lint):` sweep pending — recurring lint-debt-after-fix pattern)
-- Latest run set: `data/processed/runs/aa-dc07a16dffa9-96451d89bace-20260506T223808Z-b599-crisis_correlation`
+- Latest run set: `data/processed/runs/aa-dc07a16dffa9-96451d89bace-20260507T224306Z-50f4-crisis_correlation`
 
-Recent series (no new behavior commits since last tracker sync at `0280024`; most recent 5 shown):
+Recent series (no new behavior commits since last tracker sync at `3b45185`; most recent 5 shown):
+- `3b45185` docs(tracking): MODE A sync 2026-05-06 — 386 tests stable, 1 ruff error carried, gov flag unresolved
 - `5977b19` docs(tracking): MODE A sync 2026-05-05 — 386 tests, 1 ruff error, governance flag on 3 fix() commits
 - `0280024` fix(manifest): sanitize invocation_id against path traversal
 - `d2d9e09` fix(config): expand hash, resolve overlay paths, tighten policy schemas
 - `021a408` fix(pe): TA wind-down, fund_count cap, reconciliation div-by-zero
-- `fc85426` docs(governance): sync governance docs to Phase 23 / L20 resolved
 
 ⚠️ **Governance flag** (carried forward — unresolved): `021a408` / `d2d9e09` / `0280024` touch `src/aa_model/` (manifest, loaders, coverage, pe/call_obligation, pe/call_reconciliation, pe/ta_model) but `MODEL_DOCUMENTATION.md` was not updated in this range. +195 lines of new tests in `test_review_fixes_2026_05_05.py` suggest substantive behavior changes beyond cosmetic fixes. Recommend a `docs(model):` follow-up for the three `fix()` commits to satisfy the behavior-change governance rule.
 
@@ -125,14 +125,14 @@ Cron jobs are registered separately in Hermes (see `cronjob list`).
 ### Asset Allocation Model — Status
 ```
 Current phase:        Phase 23 — PE real-data commitment input layer (design locked; implementation pending)
-Last pushed commit:   5977b19  (docs(tracking): MODE A sync 2026-05-05)
+Last pushed commit:   3b45185  (docs(tracking): MODE A sync 2026-05-06)
 Tests:                386 passed (--ignore=tests/test_transaction_cost_summary.py; 4 cvxportfolio-gated omitted)
 Ruff errors:          1 (I001 fixable in test_review_fixes_2026_05_05.py; chore(lint): sweep pending)
 Open limitations:     11  (L20 resolved Phase 20+21 2026-05-03)
 Resolved limitations: 8   (L4, L6, L8, L13, L15, L16, L18, L20)
 Next gated task:      Phase 23 implementation
 Last model-doc update: 2026-05-04
-Latest run:           20260506T223808Z (crisis_correlation)
+Latest run:           20260507T224306Z (crisis_correlation)
 ```
 
 ### Governance Gates
